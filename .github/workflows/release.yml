@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build all targets
+        run: |
+          TAG=${GITHUB_REF_NAME}
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            GOOS=${target%/*}
+            GOARCH=${target#*/}
+            EXT="" && [ "$GOOS" = "windows" ] && EXT=".exe"
+            CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH \
+              go build -trimpath -ldflags="-s -w -X main.Version=${TAG}" -o mcp${EXT}
+            if [ "$GOOS" = "windows" ]; then
+              zip mcp_${TAG}_${GOOS}_${GOARCH}.zip mcp${EXT}
+            else
+              tar czf mcp_${TAG}_${GOOS}_${GOARCH}.tar.gz mcp
+            fi
+            rm -f mcp${EXT}
+          done
+          sha256sum mcp_${TAG}_*.tar.gz mcp_${TAG}_*.zip > mcp_${TAG}_checksums.txt
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            mcp_*.tar.gz
+            mcp_*.zip
+            mcp_*_checksums.txt
+          generate_release_notes: true
