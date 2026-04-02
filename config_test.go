@@ -352,7 +352,9 @@ func TestToolCacheSaveLoadTTL(t *testing.T) {
 		Tools:    toolList,
 		CachedAt: time.Now().Add(-20 * time.Minute).Unix(),
 	}
-	writeJSON(cachePath("expired"), cache)
+	if err := writeJSON(cachePath("expired"), cache); err != nil {
+		t.Fatal(err)
+	}
 
 	expired, err := loadCachedTools("expired")
 	if err != nil {
@@ -383,7 +385,9 @@ func TestLoadCachedToolsStale(t *testing.T) {
 		Tools:    toolList,
 		CachedAt: time.Now().Add(-20 * time.Minute).Unix(),
 	}
-	writeJSON(cachePath("stale"), cache)
+	if err := writeJSON(cachePath("stale"), cache); err != nil {
+		t.Fatal(err)
+	}
 
 	// loadCachedTools returns nil (expired).
 	fresh, err := loadCachedTools("stale")

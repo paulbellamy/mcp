@@ -54,7 +54,7 @@ func cmdDaemonStop() error {
 		return fmt.Errorf("find process: %w", err)
 	}
 	if err := proc.Signal(syscall.SIGTERM); err != nil {
-		os.Remove(daemonPIDPath())
+		_ = os.Remove(daemonPIDPath())
 		return fmt.Errorf("signal process: %w", err)
 	}
 	logStderr("sent SIGTERM to daemon (PID %d)", pid)
@@ -72,7 +72,7 @@ func cmdDaemonRun() error {
 				}
 			}
 		}
-		os.Remove(daemonPIDPath())
+		_ = os.Remove(daemonPIDPath())
 	}
 
 	// Ensure daemon socket directory exists
@@ -84,7 +84,7 @@ func cmdDaemonRun() error {
 	entries, _ := os.ReadDir(daemonSocketDir())
 	for _, e := range entries {
 		if strings.HasSuffix(e.Name(), ".sock") {
-			os.Remove(filepath.Join(daemonSocketDir(), e.Name()))
+			_ = os.Remove(filepath.Join(daemonSocketDir(), e.Name()))
 		}
 	}
 
@@ -92,7 +92,7 @@ func cmdDaemonRun() error {
 	if err := atomicWrite(daemonPIDPath(), []byte(strconv.Itoa(os.Getpid())+"\n")); err != nil {
 		return fmt.Errorf("write PID file: %w", err)
 	}
-	defer os.Remove(daemonPIDPath())
+	defer func() { _ = os.Remove(daemonPIDPath()) }()
 
 	servers, err := loadServers()
 	if err != nil {
@@ -183,7 +183,7 @@ func (d *daemon) startServer(config ServerConfig) (*managedServer, error) {
 		},
 	})
 	if err != nil {
-		transport.Close()
+		_ = transport.Close()
 		return nil, fmt.Errorf("initialize: %w", err)
 	}
 	if initResp.Error != nil {
@@ -201,7 +201,7 @@ func (d *daemon) startServer(config ServerConfig) (*managedServer, error) {
 
 	// Create Unix socket
 	sockPath := daemonSocketPath(config.Name)
-	os.Remove(sockPath)
+	_ = os.Remove(sockPath)
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
 		_ = transport.Close()
@@ -323,7 +323,7 @@ func (d *daemon) respawnServer(ms *managedServer) error {
 		},
 	})
 	if err != nil {
-		transport.Close()
+		_ = transport.Close()
 		return err
 	}
 	if initResp.Error != nil {
@@ -347,7 +347,7 @@ func (d *daemon) respawnServer(ms *managedServer) error {
 func (d *daemon) shutdown() {
 	for name, ms := range d.servers {
 		_ = ms.listener.Close()
-		os.Remove(daemonSocketPath(name))
+		_ = os.Remove(daemonSocketPath(name))
 		_ = ms.transport.Close()
 	}
 }

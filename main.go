@@ -245,7 +245,7 @@ func cmdPing(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer transport.Close()
+	defer func() { _ = transport.Close() }()
 
 	if err := mcpPing(transport); err != nil {
 		return err

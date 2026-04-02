@@ -263,7 +263,7 @@ func TestStdioTransport_SendReceive(t *testing.T) {
 
 	// Mock server goroutine
 	go func() {
-		defer serverStdoutWriter.Close()
+		defer func() { _ = serverStdoutWriter.Close() }()
 		scanner := bufio.NewScanner(serverStdinReader)
 		for scanner.Scan() {
 			var req jsonrpcRequest
@@ -301,7 +301,7 @@ func TestStdioTransport_SkipNotifications(t *testing.T) {
 
 	// Server sends a notification then the real response
 	go func() {
-		defer serverStdoutWriter.Close()
+		defer func() { _ = serverStdoutWriter.Close() }()
 		scanner := bufio.NewScanner(serverStdinReader)
 		for scanner.Scan() {
 			var req jsonrpcRequest
@@ -342,7 +342,7 @@ func TestStdioTransport_SkipNonJSON(t *testing.T) {
 	transport := newTestStdioTransport(clientStdinWriter, clientStdoutReader)
 
 	go func() {
-		defer serverStdoutWriter.Close()
+		defer func() { _ = serverStdoutWriter.Close() }()
 		scanner := bufio.NewScanner(serverStdinReader)
 		for scanner.Scan() {
 			var req jsonrpcRequest
@@ -381,7 +381,7 @@ func TestStdioTransport_MismatchedID(t *testing.T) {
 	transport := newTestStdioTransport(clientStdinWriter, clientStdoutReader)
 
 	go func() {
-		defer serverStdoutWriter.Close()
+		defer func() { _ = serverStdoutWriter.Close() }()
 		scanner := bufio.NewScanner(serverStdinReader)
 		for scanner.Scan() {
 			var req jsonrpcRequest

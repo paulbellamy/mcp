@@ -34,8 +34,8 @@ func shortSockPath(t *testing.T) string {
 	}
 	path := f.Name()
 	_ = f.Close()
-	os.Remove(path)
-	t.Cleanup(func() { os.Remove(path) })
+	_ = os.Remove(path)
+	t.Cleanup(func() { _ = os.Remove(path) })
 	return path
 }
 
@@ -87,7 +87,7 @@ func TestDaemonTransport_SendReceive(t *testing.T) {
 	defer func() { _ = ln.Close() }()
 
 	transport := newTestDaemonTransport(t, sockPath)
-	defer transport.Close()
+	defer func() { _ = transport.Close() }()
 
 	resp, err := transport.Send(jsonrpcRequest{JSONRPC: "2.0", ID: 1, Method: "test"})
 	if err != nil {
@@ -109,7 +109,7 @@ func TestDaemonTransport_MultipleSends(t *testing.T) {
 	defer func() { _ = ln.Close() }()
 
 	transport := newTestDaemonTransport(t, sockPath)
-	defer transport.Close()
+	defer func() { _ = transport.Close() }()
 
 	for i := 1; i <= 5; i++ {
 		resp, err := transport.Send(jsonrpcRequest{JSONRPC: "2.0", ID: i, Method: "test"})
@@ -150,7 +150,7 @@ func TestDaemonTransport_Notify(t *testing.T) {
 	}()
 
 	transport := newTestDaemonTransport(t, sockPath)
-	defer transport.Close()
+	defer func() { _ = transport.Close() }()
 
 	err = transport.Notify(jsonrpcNotification{JSONRPC: "2.0", Method: "notifications/test"})
 	if err != nil {
@@ -490,7 +490,7 @@ func TestDaemon_AcceptLoop_Serialization(t *testing.T) {
 			_, _ = conn.Write(append(data, '\n'))
 
 			reader := bufio.NewReader(conn)
-			reader.ReadBytes('\n')
+			_, _ = reader.ReadBytes('\n')
 		}(i)
 	}
 
@@ -593,7 +593,7 @@ func TestDaemon_ActiveConnTracking(t *testing.T) {
 	_, _ = conn.Write(append(data, '\n'))
 
 	reader := bufio.NewReader(conn)
-	reader.ReadBytes('\n')
+	_, _ = reader.ReadBytes('\n')
 	_ = conn.Close()
 
 	// Give acceptLoop time to update counters
@@ -616,7 +616,7 @@ func TestMcpConnect_UsesDaemonWhenAvailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	testConfigDir = dir
 	t.Cleanup(func() { testConfigDir = "" })
 	_ = ensureConfigDirs()
@@ -662,7 +662,7 @@ func TestMcpConnect_UsesDaemonWhenAvailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer transport.Close()
+	defer func() { _ = transport.Close() }()
 
 	if _, ok := transport.(*DaemonTransport); !ok {
 		t.Fatalf("expected DaemonTransport, got %T", transport)

@@ -17,12 +17,12 @@ func lockFile(path string) (unlock func(), err error) {
 		return nil, fmt.Errorf("open lock file: %w", err)
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, fmt.Errorf("flock: %w", err)
 	}
 	return func() {
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		f.Close()
-		os.Remove(lockPath)
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+		_ = os.Remove(lockPath)
 	}, nil
 }
