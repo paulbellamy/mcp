@@ -45,6 +45,14 @@ mcp call <server> <tool> --stream --params '{"key": "value"}'
 # Authenticate
 mcp auth <name> --callback-url <url>
 
+# Use a server without adding it (pass URL directly)
+mcp tools https://api.example.com/mcp
+mcp call https://api.example.com/mcp <tool> --params '{"key": "value"}'
+mcp ping https://api.example.com/mcp
+
+# Authenticate with a token for ad-hoc URLs
+MCP_AUTH_TOKEN=<token> mcp call https://api.example.com/mcp <tool> --params '{}'
+
 # Ping / remove
 mcp ping <server>
 mcp remove <name>
