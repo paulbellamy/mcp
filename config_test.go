@@ -188,8 +188,12 @@ func TestFindPendingAuthByNonce(t *testing.T) {
 	// Save two pending auths
 	pa1 := &PendingAuth{Nonce: "nonce-1", ServerName: "server1", CreatedAt: time.Now().Unix()}
 	pa2 := &PendingAuth{Nonce: "nonce-2", ServerName: "server2", CreatedAt: time.Now().Unix()}
-	savePendingAuth("server1", pa1)
-	savePendingAuth("server2", pa2)
+	if err := savePendingAuth("server1", pa1); err != nil {
+		t.Fatal(err)
+	}
+	if err := savePendingAuth("server2", pa2); err != nil {
+		t.Fatal(err)
+	}
 
 	// Find by nonce
 	found, path, err := findPendingAuthByNonce("nonce-2")
@@ -289,7 +293,9 @@ func TestFindPendingAuthByNonce_Expired(t *testing.T) {
 		ServerName: "expserver",
 		CreatedAt:  time.Now().Add(-15 * time.Minute).Unix(),
 	}
-	savePendingAuth("expserver", pa)
+	if err := savePendingAuth("expserver", pa); err != nil {
+		t.Fatal(err)
+	}
 
 	found, _, err := findPendingAuthByNonce("expired-nonce")
 	if err != nil {

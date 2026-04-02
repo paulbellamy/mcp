@@ -187,7 +187,7 @@ func (d *daemon) startServer(config ServerConfig) (*managedServer, error) {
 		return nil, fmt.Errorf("initialize: %w", err)
 	}
 	if initResp.Error != nil {
-		transport.Close()
+		_ = transport.Close()
 		return nil, fmt.Errorf("initialize: %s", initResp.Error.Message)
 	}
 
@@ -195,7 +195,7 @@ func (d *daemon) startServer(config ServerConfig) (*managedServer, error) {
 		JSONRPC: jsonrpcVersion,
 		Method:  "notifications/initialized",
 	}); err != nil {
-		transport.Close()
+		_ = transport.Close()
 		return nil, fmt.Errorf("initialized notification: %w", err)
 	}
 
@@ -204,10 +204,10 @@ func (d *daemon) startServer(config ServerConfig) (*managedServer, error) {
 	os.Remove(sockPath)
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
-		transport.Close()
+		_ = transport.Close()
 		return nil, fmt.Errorf("listen: %w", err)
 	}
-	os.Chmod(sockPath, 0600)
+	_ = os.Chmod(sockPath, 0600)
 
 	return &managedServer{
 		config:    config,
@@ -240,7 +240,7 @@ func (d *daemon) acceptLoop(ms *managedServer) {
 }
 
 func (d *daemon) handleClient(conn net.Conn, ms *managedServer) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	reader := bufio.NewReader(conn)
 
 	for {
@@ -266,7 +266,7 @@ func (d *daemon) handleClient(conn net.Conn, ms *managedServer) {
 			// Notification — forward, no response
 			var notif jsonrpcNotification
 			if err := json.Unmarshal(line, &notif); err == nil {
-				ms.transport.Notify(notif)
+				_ = ms.transport.Notify(notif)
 			}
 			continue
 		}
@@ -305,7 +305,7 @@ func (d *daemon) handleClient(conn net.Conn, ms *managedServer) {
 
 func (d *daemon) respawnServer(ms *managedServer) error {
 	logStderr("respawning %q...", ms.config.Name)
-	ms.transport.Close()
+	_ = ms.transport.Close()
 
 	transport, err := NewStdioTransport(ms.config.Command, ms.config.Args)
 	if err != nil {
@@ -327,7 +327,7 @@ func (d *daemon) respawnServer(ms *managedServer) error {
 		return err
 	}
 	if initResp.Error != nil {
-		transport.Close()
+		_ = transport.Close()
 		return fmt.Errorf("%s", initResp.Error.Message)
 	}
 
@@ -335,7 +335,7 @@ func (d *daemon) respawnServer(ms *managedServer) error {
 		JSONRPC: jsonrpcVersion,
 		Method:  "notifications/initialized",
 	}); err != nil {
-		transport.Close()
+		_ = transport.Close()
 		return err
 	}
 
@@ -346,8 +346,8 @@ func (d *daemon) respawnServer(ms *managedServer) error {
 
 func (d *daemon) shutdown() {
 	for name, ms := range d.servers {
-		ms.listener.Close()
+		_ = ms.listener.Close()
 		os.Remove(daemonSocketPath(name))
-		ms.transport.Close()
+		_ = ms.transport.Close()
 	}
 }

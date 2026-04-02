@@ -33,7 +33,7 @@ func shortSockPath(t *testing.T) string {
 		t.Fatal(err)
 	}
 	path := f.Name()
-	f.Close()
+	_ = f.Close()
 	os.Remove(path)
 	t.Cleanup(func() { os.Remove(path) })
 	return path
@@ -56,7 +56,7 @@ func startMockSocketServer(t *testing.T) (net.Listener, string) {
 				return
 			}
 			go func(c net.Conn) {
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				reader := bufio.NewReader(c)
 				for {
 					line, err := reader.ReadBytes('\n')
@@ -73,7 +73,7 @@ func startMockSocketServer(t *testing.T) (net.Listener, string) {
 						Result:  json.RawMessage(`{"ok":true}`),
 					}
 					data, _ := json.Marshal(resp)
-					c.Write(append(data, '\n'))
+					_, _ = c.Write(append(data, '\n'))
 				}
 			}(conn)
 		}
@@ -84,7 +84,7 @@ func startMockSocketServer(t *testing.T) (net.Listener, string) {
 
 func TestDaemonTransport_SendReceive(t *testing.T) {
 	ln, sockPath := startMockSocketServer(t)
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	transport := newTestDaemonTransport(t, sockPath)
 	defer transport.Close()
@@ -98,7 +98,7 @@ func TestDaemonTransport_SendReceive(t *testing.T) {
 	}
 
 	var id int
-	json.Unmarshal(resp.ID, &id)
+	_ = json.Unmarshal(resp.ID, &id)
 	if id != 1 {
 		t.Errorf("expected response ID 1, got %d", id)
 	}
@@ -106,7 +106,7 @@ func TestDaemonTransport_SendReceive(t *testing.T) {
 
 func TestDaemonTransport_MultipleSends(t *testing.T) {
 	ln, sockPath := startMockSocketServer(t)
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	transport := newTestDaemonTransport(t, sockPath)
 	defer transport.Close()
@@ -117,7 +117,7 @@ func TestDaemonTransport_MultipleSends(t *testing.T) {
 			t.Fatalf("send %d: %v", i, err)
 		}
 		var id int
-		json.Unmarshal(resp.ID, &id)
+		_ = json.Unmarshal(resp.ID, &id)
 		if id != i {
 			t.Errorf("send %d: expected ID %d, got %d", i, i, id)
 		}
@@ -131,21 +131,21 @@ func TestDaemonTransport_Notify(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	go func() {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		reader := bufio.NewReader(conn)
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
 			return
 		}
 		var notif jsonrpcNotification
-		json.Unmarshal(line, &notif)
+		_ = json.Unmarshal(line, &notif)
 		received <- notif.Method
 	}()
 
@@ -179,7 +179,7 @@ func TestDaemonTransport_ConnectFailure(t *testing.T) {
 
 func TestDaemonTransport_Close(t *testing.T) {
 	ln, sockPath := startMockSocketServer(t)
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	transport := newTestDaemonTransport(t, sockPath)
 	if err := transport.Close(); err != nil {
@@ -229,7 +229,7 @@ func TestDaemon_HandleClient_Request(t *testing.T) {
 	// Send a request through the client side
 	req := jsonrpcRequest{JSONRPC: "2.0", ID: 1, Method: "tools/call"}
 	data, _ := json.Marshal(req)
-	client.Write(append(data, '\n'))
+	_, _ = client.Write(append(data, '\n'))
 
 	// Read response
 	reader := bufio.NewReader(client)
@@ -249,7 +249,7 @@ func TestDaemon_HandleClient_Request(t *testing.T) {
 		t.Errorf("expected result {\"tool\":\"result\"}, got %s", string(resp.Result))
 	}
 
-	client.Close()
+	_ = client.Close()
 	<-done
 }
 
@@ -284,7 +284,7 @@ func TestDaemon_HandleClient_Notification(t *testing.T) {
 	// Send a notification (no id)
 	notif := jsonrpcNotification{JSONRPC: "2.0", Method: "notifications/cancelled"}
 	data, _ := json.Marshal(notif)
-	client.Write(append(data, '\n'))
+	_, _ = client.Write(append(data, '\n'))
 
 	select {
 	case method := <-notified:
@@ -295,7 +295,7 @@ func TestDaemon_HandleClient_Notification(t *testing.T) {
 		t.Fatal("timeout waiting for notification")
 	}
 
-	client.Close()
+	_ = client.Close()
 	<-done
 }
 
@@ -329,7 +329,7 @@ func TestDaemon_HandleClient_TransportError(t *testing.T) {
 
 	req := jsonrpcRequest{JSONRPC: "2.0", ID: 1, Method: "test"}
 	data, _ := json.Marshal(req)
-	client.Write(append(data, '\n'))
+	_, _ = client.Write(append(data, '\n'))
 
 	// Should get an error response (respawn will also fail since command is bogus)
 	reader := bufio.NewReader(client)
@@ -339,7 +339,7 @@ func TestDaemon_HandleClient_TransportError(t *testing.T) {
 	}
 
 	var resp jsonrpcResponse
-	json.Unmarshal(line, &resp)
+	_ = json.Unmarshal(line, &resp)
 	if resp.Error == nil {
 		t.Fatal("expected error response")
 	}
@@ -347,7 +347,7 @@ func TestDaemon_HandleClient_TransportError(t *testing.T) {
 		t.Errorf("expected error code -32603, got %d", resp.Error.Code)
 	}
 
-	client.Close()
+	_ = client.Close()
 	<-done
 }
 
@@ -404,7 +404,7 @@ func TestDaemon_HandleClient_Respawn(t *testing.T) {
 
 	req := jsonrpcRequest{JSONRPC: "2.0", ID: 1, Method: "test"}
 	data, _ := json.Marshal(req)
-	client.Write(append(data, '\n'))
+	_, _ = client.Write(append(data, '\n'))
 
 	reader := bufio.NewReader(client)
 	line, err := reader.ReadBytes('\n')
@@ -413,13 +413,13 @@ func TestDaemon_HandleClient_Respawn(t *testing.T) {
 	}
 
 	var resp jsonrpcResponse
-	json.Unmarshal(line, &resp)
+	_ = json.Unmarshal(line, &resp)
 	// Respawn fails (bad command), so we get the original error
 	if resp.Error == nil {
 		t.Fatal("expected error response")
 	}
 
-	client.Close()
+	_ = client.Close()
 	<-done
 }
 
@@ -483,11 +483,11 @@ func TestDaemon_AcceptLoop_Serialization(t *testing.T) {
 				t.Errorf("client %d: dial: %v", id, err)
 				return
 			}
-			defer conn.Close()
+			defer func() { _ = conn.Close() }()
 
 			req := jsonrpcRequest{JSONRPC: "2.0", ID: id + 1, Method: "test"}
 			data, _ := json.Marshal(req)
-			conn.Write(append(data, '\n'))
+			_, _ = conn.Write(append(data, '\n'))
 
 			reader := bufio.NewReader(conn)
 			reader.ReadBytes('\n')
@@ -495,7 +495,7 @@ func TestDaemon_AcceptLoop_Serialization(t *testing.T) {
 	}
 
 	wg.Wait()
-	ln.Close()
+	_ = ln.Close()
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -534,7 +534,7 @@ func TestDaemon_Shutdown(t *testing.T) {
 	dir := setupTestConfigDir(t)
 	// Create the socket file so shutdown can remove it
 	sockDir := filepath.Join(dir, "daemon")
-	os.MkdirAll(sockDir, 0700)
+	_ = os.MkdirAll(sockDir, 0700)
 
 	d.shutdown()
 
@@ -590,11 +590,11 @@ func TestDaemon_ActiveConnTracking(t *testing.T) {
 
 	req := jsonrpcRequest{JSONRPC: "2.0", ID: 1, Method: "test"}
 	data, _ := json.Marshal(req)
-	conn.Write(append(data, '\n'))
+	_, _ = conn.Write(append(data, '\n'))
 
 	reader := bufio.NewReader(conn)
 	reader.ReadBytes('\n')
-	conn.Close()
+	_ = conn.Close()
 
 	// Give acceptLoop time to update counters
 	time.Sleep(50 * time.Millisecond)
@@ -607,7 +607,7 @@ func TestDaemon_ActiveConnTracking(t *testing.T) {
 		t.Errorf("expected 0 active connections after disconnect, got %d", active)
 	}
 
-	ln.Close()
+	_ = ln.Close()
 }
 
 func TestMcpConnect_UsesDaemonWhenAvailable(t *testing.T) {
@@ -619,21 +619,21 @@ func TestMcpConnect_UsesDaemonWhenAvailable(t *testing.T) {
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	testConfigDir = dir
 	t.Cleanup(func() { testConfigDir = "" })
-	ensureConfigDirs()
+	_ = ensureConfigDirs()
 
 	sockPath := daemonSocketPath("test-srv")
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	go func() {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		reader := bufio.NewReader(conn)
 		for {
 			line, err := reader.ReadBytes('\n')
@@ -641,14 +641,14 @@ func TestMcpConnect_UsesDaemonWhenAvailable(t *testing.T) {
 				return
 			}
 			var req jsonrpcRequest
-			json.Unmarshal(line, &req)
+			_ = json.Unmarshal(line, &req)
 			resp := jsonrpcResponse{
 				JSONRPC: "2.0",
 				ID:      json.RawMessage(fmt.Sprintf("%d", req.ID)),
 				Result:  json.RawMessage(`{"tools":[]}`),
 			}
 			data, _ := json.Marshal(resp)
-			conn.Write(append(data, '\n'))
+			_, _ = conn.Write(append(data, '\n'))
 		}
 	}()
 

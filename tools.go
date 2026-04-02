@@ -47,11 +47,11 @@ func mcpConnect(server *ServerConfig, authToken string) (Transport, error) {
 		},
 	})
 	if err != nil {
-		transport.Close()
+		_ = transport.Close()
 		return nil, fmt.Errorf("initialize: %w", err)
 	}
 	if initResp.Error != nil {
-		transport.Close()
+		_ = transport.Close()
 		return nil, fmt.Errorf("initialize: %s", initResp.Error.Message)
 	}
 
@@ -60,7 +60,7 @@ func mcpConnect(server *ServerConfig, authToken string) (Transport, error) {
 		JSONRPC: jsonrpcVersion,
 		Method:  "notifications/initialized",
 	}); err != nil {
-		transport.Close()
+		_ = transport.Close()
 		return nil, fmt.Errorf("send initialized notification: %w", err)
 	}
 
@@ -73,7 +73,7 @@ func discoverTools(server *ServerConfig, authToken string) ([]toolOutput, error)
 	if err != nil {
 		return nil, err
 	}
-	defer transport.Close()
+	defer func() { _ = transport.Close() }()
 
 	return listAllTools(transport, server.Name)
 }
@@ -373,7 +373,7 @@ func isStdoutTTY() bool {
 // printToolsHuman formats tools as CLI-style help text grouped by server.
 func printToolsHuman(tools []toolOutput) error {
 	if len(tools) == 0 {
-		fmt.Fprintln(os.Stderr, "No tools found.")
+		_, _ = fmt.Fprintln(os.Stderr, "No tools found.")
 		return nil
 	}
 
@@ -391,7 +391,7 @@ func printToolsHuman(tools []toolOutput) error {
 	for _, t := range tools {
 		if t.Server != lastServer {
 			if lastServer != "" {
-				fmt.Fprintln(os.Stdout)
+				_, _ = fmt.Fprintln(os.Stdout)
 			}
 			// Count tools for this server.
 			serverCount = 0
@@ -404,18 +404,18 @@ func printToolsHuman(tools []toolOutput) error {
 			if serverCount == 1 {
 				noun = "tool"
 			}
-			fmt.Fprintf(os.Stdout, "%s (%d %s)\n", t.Server, serverCount, noun)
+			_, _ = fmt.Fprintf(os.Stdout, "%s (%d %s)\n", t.Server, serverCount, noun)
 			lastServer = t.Server
 		}
 		if t.Description == "" {
-			fmt.Fprintf(os.Stdout, "  %s\n", t.Name)
+			_, _ = fmt.Fprintf(os.Stdout, "  %s\n", t.Name)
 		} else {
 			// Indent continuation lines to align with the description column.
 			pad := strings.Repeat(" ", 2+maxNameLen+2)
 			lines := strings.Split(t.Description, "\n")
-			fmt.Fprintf(os.Stdout, "  %-*s  %s\n", maxNameLen, t.Name, lines[0])
+			_, _ = fmt.Fprintf(os.Stdout, "  %-*s  %s\n", maxNameLen, t.Name, lines[0])
 			for _, line := range lines[1:] {
-				fmt.Fprintf(os.Stdout, "%s%s\n", pad, line)
+				_, _ = fmt.Fprintf(os.Stdout, "%s%s\n", pad, line)
 			}
 		}
 	}

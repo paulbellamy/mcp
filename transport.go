@@ -195,7 +195,7 @@ func (t *StdioTransport) Notify(notif jsonrpcNotification) error {
 }
 
 func (t *StdioTransport) Close() error {
-	t.stdin.Close()
+	_ = t.stdin.Close()
 
 	// Wait up to 2s for process to exit gracefully
 	exited := make(chan error, 1)
@@ -262,7 +262,7 @@ func (t *HTTPTransport) sendWithContext(ctx context.Context, req jsonrpcRequest,
 	if err != nil {
 		return jsonrpcResponse{}, fmt.Errorf("http request: %w", err)
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 
 	if httpResp.StatusCode != http.StatusOK {
 		body, _ := readResponseBody(httpResp.Body)
@@ -393,7 +393,7 @@ func (t *HTTPTransport) Notify(notif jsonrpcNotification) error {
 	if err != nil {
 		return fmt.Errorf("http request: %w", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("notification failed: HTTP %d", resp.StatusCode)
@@ -415,7 +415,7 @@ func (t *HTTPTransport) Close() error {
 			}
 			resp, err := t.client.Do(req)
 			if err == nil {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 			}
 		}
 	}
@@ -451,12 +451,12 @@ func (t *DaemonTransport) Send(req jsonrpcRequest) (jsonrpcResponse, error) {
 		return jsonrpcResponse{}, fmt.Errorf("marshal: %w", err)
 	}
 
-	t.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	_ = t.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	if _, err := t.conn.Write(append(data, '\n')); err != nil {
 		return jsonrpcResponse{}, fmt.Errorf("write: %w", err)
 	}
 
-	t.conn.SetReadDeadline(time.Now().Add(120 * time.Second))
+	_ = t.conn.SetReadDeadline(time.Now().Add(120 * time.Second))
 	for {
 		line, err := t.reader.ReadBytes('\n')
 		if err != nil {
@@ -485,7 +485,7 @@ func (t *DaemonTransport) Notify(notif jsonrpcNotification) error {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	_ = t.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	_, err = t.conn.Write(append(data, '\n'))
 	return err
 }

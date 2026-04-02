@@ -16,7 +16,7 @@ import (
 func TestHTTPTransport_PlainJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req jsonrpcRequest
-		json.NewDecoder(r.Body).Decode(&req)
+		_ = json.NewDecoder(r.Body).Decode(&req)
 
 		resp := jsonrpcResponse{
 			JSONRPC: "2.0",
@@ -24,7 +24,7 @@ func TestHTTPTransport_PlainJSON(t *testing.T) {
 			Result:  json.RawMessage(`{"tools":[]}`),
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer srv.Close()
 
@@ -48,14 +48,14 @@ func TestHTTPTransport_PlainJSON(t *testing.T) {
 func TestHTTPTransport_SSE(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req jsonrpcRequest
-		json.NewDecoder(r.Body).Decode(&req)
+		_ = json.NewDecoder(r.Body).Decode(&req)
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher := w.(http.Flusher)
 
 		// Send progress event
-		fmt.Fprintln(w, "data: {\"type\":\"progress\"}")
-		fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w, "data: {\"type\":\"progress\"}")
+		_, _ = fmt.Fprintln(w)
 		flusher.Flush()
 
 		// Send response with matching ID
@@ -65,7 +65,7 @@ func TestHTTPTransport_SSE(t *testing.T) {
 			Result:  json.RawMessage(`{"content":[{"type":"text","text":"done"}]}`),
 		}
 		data, _ := json.Marshal(resp)
-		fmt.Fprintf(w, "data: %s\n\n", data)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	}))
 	defer srv.Close()
@@ -93,15 +93,15 @@ func TestHTTPTransport_SSE(t *testing.T) {
 func TestHTTPTransport_SSE_MultiLineData(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req jsonrpcRequest
-		json.NewDecoder(r.Body).Decode(&req)
+		_ = json.NewDecoder(r.Body).Decode(&req)
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher := w.(http.Flusher)
 
 		// Send progress as a multi-line data event (two data: lines per SSE spec)
-		fmt.Fprintln(w, "data: line1")
-		fmt.Fprintln(w, "data: line2")
-		fmt.Fprintln(w) // blank line = event boundary
+		_, _ = fmt.Fprintln(w, "data: line1")
+		_, _ = fmt.Fprintln(w, "data: line2")
+		_, _ = fmt.Fprintln(w) // blank line = event boundary
 		flusher.Flush()
 
 		// Send actual response (single data: line + blank line delimiter)
@@ -111,7 +111,7 @@ func TestHTTPTransport_SSE_MultiLineData(t *testing.T) {
 			Result:  json.RawMessage(`{"content":[{"type":"text","text":"done"}]}`),
 		}
 		data, _ := json.Marshal(resp)
-		fmt.Fprintf(w, "data: %s\n\n", data)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	}))
 	defer srv.Close()
@@ -149,7 +149,7 @@ func TestHTTPTransport_SessionIDCapture(t *testing.T) {
 			ID:      json.RawMessage("1"),
 			Result:  json.RawMessage("{}"),
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer srv.Close()
 
@@ -169,7 +169,7 @@ func TestHTTPTransport_AuthHeader(t *testing.T) {
 		receivedAuth = r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "application/json")
 		resp := jsonrpcResponse{JSONRPC: "2.0", ID: json.RawMessage("1"), Result: json.RawMessage("{}")}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer srv.Close()
 
@@ -186,7 +186,7 @@ func TestHTTPTransport_AuthHeader(t *testing.T) {
 func TestHTTPTransport_NonOKStatus(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("server error"))
+		_, _ = w.Write([]byte("server error"))
 	}))
 	defer srv.Close()
 
@@ -224,7 +224,7 @@ func TestHTTPTransport_SessionIDSent(t *testing.T) {
 		receivedSessionID = r.Header.Get("Mcp-Session-Id")
 		w.Header().Set("Content-Type", "application/json")
 		resp := jsonrpcResponse{JSONRPC: "2.0", ID: json.RawMessage("1"), Result: json.RawMessage("{}")}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer srv.Close()
 
@@ -267,14 +267,14 @@ func TestStdioTransport_SendReceive(t *testing.T) {
 		scanner := bufio.NewScanner(serverStdinReader)
 		for scanner.Scan() {
 			var req jsonrpcRequest
-			json.Unmarshal(scanner.Bytes(), &req)
+			_ = json.Unmarshal(scanner.Bytes(), &req)
 			resp := jsonrpcResponse{
 				JSONRPC: "2.0",
 				ID:      json.RawMessage(fmt.Sprintf("%d", req.ID)),
 				Result:  json.RawMessage(`{"tools":[]}`),
 			}
 			data, _ := json.Marshal(resp)
-			serverStdoutWriter.Write(append(data, '\n'))
+			_, _ = serverStdoutWriter.Write(append(data, '\n'))
 		}
 	}()
 
@@ -287,7 +287,7 @@ func TestStdioTransport_SendReceive(t *testing.T) {
 	}
 
 	var id int
-	json.Unmarshal(resp.ID, &id)
+	_ = json.Unmarshal(resp.ID, &id)
 	if id != 1 {
 		t.Errorf("expected response ID 1, got %d", id)
 	}
@@ -305,12 +305,12 @@ func TestStdioTransport_SkipNotifications(t *testing.T) {
 		scanner := bufio.NewScanner(serverStdinReader)
 		for scanner.Scan() {
 			var req jsonrpcRequest
-			json.Unmarshal(scanner.Bytes(), &req)
+			_ = json.Unmarshal(scanner.Bytes(), &req)
 
 			// Send notification (no id)
 			notif := jsonrpcNotification{JSONRPC: "2.0", Method: "notifications/progress"}
 			nData, _ := json.Marshal(notif)
-			serverStdoutWriter.Write(append(nData, '\n'))
+			_, _ = serverStdoutWriter.Write(append(nData, '\n'))
 
 			// Send actual response
 			resp := jsonrpcResponse{
@@ -319,7 +319,7 @@ func TestStdioTransport_SkipNotifications(t *testing.T) {
 				Result:  json.RawMessage(`{"ok":true}`),
 			}
 			data, _ := json.Marshal(resp)
-			serverStdoutWriter.Write(append(data, '\n'))
+			_, _ = serverStdoutWriter.Write(append(data, '\n'))
 		}
 	}()
 
@@ -329,7 +329,7 @@ func TestStdioTransport_SkipNotifications(t *testing.T) {
 	}
 
 	var id int
-	json.Unmarshal(resp.ID, &id)
+	_ = json.Unmarshal(resp.ID, &id)
 	if id != 42 {
 		t.Errorf("expected response ID 42, got %d", id)
 	}
@@ -346,10 +346,10 @@ func TestStdioTransport_SkipNonJSON(t *testing.T) {
 		scanner := bufio.NewScanner(serverStdinReader)
 		for scanner.Scan() {
 			var req jsonrpcRequest
-			json.Unmarshal(scanner.Bytes(), &req)
+			_ = json.Unmarshal(scanner.Bytes(), &req)
 
 			// Send non-JSON garbage
-			serverStdoutWriter.Write([]byte("some debug log output\n"))
+			_, _ = serverStdoutWriter.Write([]byte("some debug log output\n"))
 
 			// Then the real response
 			resp := jsonrpcResponse{
@@ -358,7 +358,7 @@ func TestStdioTransport_SkipNonJSON(t *testing.T) {
 				Result:  json.RawMessage(`{}`),
 			}
 			data, _ := json.Marshal(resp)
-			serverStdoutWriter.Write(append(data, '\n'))
+			_, _ = serverStdoutWriter.Write(append(data, '\n'))
 		}
 	}()
 
@@ -368,7 +368,7 @@ func TestStdioTransport_SkipNonJSON(t *testing.T) {
 	}
 
 	var id int
-	json.Unmarshal(resp.ID, &id)
+	_ = json.Unmarshal(resp.ID, &id)
 	if id != 7 {
 		t.Errorf("expected response ID 7, got %d", id)
 	}
@@ -385,7 +385,7 @@ func TestStdioTransport_MismatchedID(t *testing.T) {
 		scanner := bufio.NewScanner(serverStdinReader)
 		for scanner.Scan() {
 			var req jsonrpcRequest
-			json.Unmarshal(scanner.Bytes(), &req)
+			_ = json.Unmarshal(scanner.Bytes(), &req)
 
 			// Send a response with wrong ID first
 			wrong := jsonrpcResponse{
@@ -394,7 +394,7 @@ func TestStdioTransport_MismatchedID(t *testing.T) {
 				Result:  json.RawMessage(`{"wrong":true}`),
 			}
 			data, _ := json.Marshal(wrong)
-			serverStdoutWriter.Write(append(data, '\n'))
+			_, _ = serverStdoutWriter.Write(append(data, '\n'))
 
 			// Then send the correct response
 			correct := jsonrpcResponse{
@@ -403,7 +403,7 @@ func TestStdioTransport_MismatchedID(t *testing.T) {
 				Result:  json.RawMessage(`{"correct":true}`),
 			}
 			data, _ = json.Marshal(correct)
-			serverStdoutWriter.Write(append(data, '\n'))
+			_, _ = serverStdoutWriter.Write(append(data, '\n'))
 		}
 	}()
 
@@ -454,7 +454,7 @@ func TestHTTPTransport_ResponseBodyLimit(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		// Write 2MB body — exceeds maxResponseBody (1MB)
-		w.Write(bytes.Repeat([]byte("x"), 2<<20))
+		_, _ = w.Write(bytes.Repeat([]byte("x"), 2<<20))
 	}))
 	defer srv.Close()
 
@@ -471,7 +471,7 @@ func TestHTTPTransport_ResponseBodyLimit(t *testing.T) {
 func TestHTTPTransport_MalformedJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{not valid json`))
+		_, _ = w.Write([]byte(`{not valid json`))
 	}))
 	defer srv.Close()
 

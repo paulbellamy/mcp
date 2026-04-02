@@ -23,7 +23,7 @@ func localOAuthFlow(
 	codeVerifier, codeChallenge string,
 	nonce, resource string,
 ) error {
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	port := listener.Addr().(*net.TCPAddr).Port
 	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
@@ -39,7 +39,7 @@ func localOAuthFlow(
 	mux.HandleFunc("/callback", oauthCallbackHandler(nonce, codeCh, errCh))
 
 	server := &http.Server{Handler: mux}
-	go server.Serve(listener)
+	go func() { _ = server.Serve(listener) }()
 
 	// Open browser
 	logStderr("opening browser for authorization...")
@@ -49,7 +49,7 @@ func localOAuthFlow(
 	// Wait for callback or timeout
 	select {
 	case code := <-codeCh:
-		server.Shutdown(context.Background())
+		_ = server.Shutdown(context.Background())
 
 		// Exchange code for tokens
 		pending := &PendingAuth{
@@ -79,11 +79,11 @@ func localOAuthFlow(
 		return outputJSON(authOutput{Status: "complete", Server: name})
 
 	case err := <-errCh:
-		server.Shutdown(context.Background())
+		_ = server.Shutdown(context.Background())
 		return err
 
 	case <-time.After(2 * time.Minute):
-		server.Shutdown(context.Background())
+		_ = server.Shutdown(context.Background())
 		return fmt.Errorf("authorization timed out after 2 minutes")
 	}
 }
@@ -94,7 +94,7 @@ func oauthCallbackHandler(nonce string, codeCh chan<- string, errCh chan<- error
 		if errParam := r.URL.Query().Get("error"); errParam != "" {
 			desc := r.URL.Query().Get("error_description")
 			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprintf(w, "<html><body><h2>Authorization denied</h2><p>%s: %s</p><p>You can close this window.</p></body></html>", html.EscapeString(errParam), html.EscapeString(desc))
+			_, _ = fmt.Fprintf(w, "<html><body><h2>Authorization denied</h2><p>%s: %s</p><p>You can close this window.</p></body></html>", html.EscapeString(errParam), html.EscapeString(desc))
 			errCh <- fmt.Errorf("authorization denied: %s — %s", errParam, desc)
 			return
 		}
@@ -104,20 +104,20 @@ func oauthCallbackHandler(nonce string, codeCh chan<- string, errCh chan<- error
 
 		if code == "" {
 			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprint(w, "<html><body><h2>Error</h2><p>Missing authorization code.</p></body></html>")
+			_, _ = fmt.Fprint(w, "<html><body><h2>Error</h2><p>Missing authorization code.</p></body></html>")
 			errCh <- fmt.Errorf("callback missing code parameter")
 			return
 		}
 
 		if state != nonce {
 			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprint(w, "<html><body><h2>Error</h2><p>Invalid state parameter.</p></body></html>")
+			_, _ = fmt.Fprint(w, "<html><body><h2>Error</h2><p>Invalid state parameter.</p></body></html>")
 			errCh <- fmt.Errorf("state mismatch")
 			return
 		}
 
 		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprint(w, "<html><body><h2>Connected!</h2><p>Authorization successful. You can close this window.</p></body></html>")
+		_, _ = fmt.Fprint(w, "<html><body><h2>Connected!</h2><p>Authorization successful. You can close this window.</p></body></html>")
 		codeCh <- code
 	}
 }
@@ -134,6 +134,6 @@ func openBrowser(url string) {
 		cmd = exec.Command("xdg-open", url)
 	}
 	if err := cmd.Start(); err == nil {
-		go cmd.Wait()
+		go func() { _ = cmd.Wait() }()
 	}
 }
