@@ -15,7 +15,7 @@ func captureStdout(t *testing.T, fn func()) string {
 	t.Cleanup(func() { os.Stdout = old })
 
 	fn()
-	w.Close()
+	_ = w.Close()
 	os.Stdout = old
 
 	data, _ := io.ReadAll(r)
@@ -31,7 +31,7 @@ func captureStderr(t *testing.T, fn func()) string {
 	t.Cleanup(func() { os.Stderr = old })
 
 	fn()
-	w.Close()
+	_ = w.Close()
 	os.Stderr = old
 
 	data, _ := io.ReadAll(r)
@@ -79,6 +79,6 @@ func setupTestConfigDir(t interface{ TempDir() string; Cleanup(func()) }) string
 	dir := t.TempDir()
 	testConfigDir = dir
 	t.Cleanup(func() { testConfigDir = "" })
-	ensureConfigDirs()
+	_ = ensureConfigDirs()
 	return dir
 }

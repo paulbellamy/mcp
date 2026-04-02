@@ -125,7 +125,9 @@ func TestCallToolFlow(t *testing.T) {
 			// Verify params
 			data, _ := json.Marshal(req.Params)
 			var params toolCallParams
-			json.Unmarshal(data, &params)
+			if err := json.Unmarshal(data, &params); err != nil {
+				t.Fatal(err)
+			}
 			if params.Name != "echo" {
 				t.Errorf("expected tool 'echo', got %q", params.Name)
 			}
@@ -303,7 +305,9 @@ func TestCmdCall_NoTruncation(t *testing.T) {
 	}
 
 	var out callOutput
-	json.Unmarshal([]byte(data), &out)
+	if err := json.Unmarshal([]byte(data), &out); err != nil {
+		t.Fatal(err)
+	}
 	if out.Truncated {
 		t.Error("expected Truncated=false for short output")
 	}

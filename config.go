@@ -129,7 +129,7 @@ func cleanupExpiredPendingAuth() {
 			continue
 		}
 		if time.Since(info.ModTime()) > pendingAuthTTL {
-			os.Remove(path)
+			_ = os.Remove(path)
 		}
 	}
 }
@@ -143,16 +143,16 @@ func atomicWrite(path string, data []byte) error {
 	}
 	tmpPath := tmp.Name()
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	if err := os.Chmod(tmpPath, 0600); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	return os.Rename(tmpPath, path)
@@ -301,9 +301,9 @@ func removeServerConfig(name string) error {
 	}
 
 	// Clean up auth and cache files (ignore errors)
-	os.Remove(authPath(name))
-	os.Remove(pendingAuthPath(name))
-	os.Remove(cachePath(name))
+	_ = os.Remove(authPath(name))
+	_ = os.Remove(pendingAuthPath(name))
+	_ = os.Remove(cachePath(name))
 
 	return nil
 }
@@ -375,7 +375,7 @@ func findPendingAuthByNonce(nonce string) (*PendingAuth, string, error) {
 				path := filepath.Join(dir, name)
 				if found, err := readJSON(path, &pending); err == nil && found && pending.Nonce == nonce {
 					if time.Since(time.Unix(pending.CreatedAt, 0)) > pendingAuthTTL {
-						os.Remove(path)
+						_ = os.Remove(path)
 						continue
 					}
 					return &pending, path, nil

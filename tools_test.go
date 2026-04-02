@@ -58,7 +58,7 @@ func TestListAllTools_Pagination(t *testing.T) {
 				if req.Params != nil {
 					params, _ := json.Marshal(req.Params)
 					var p toolsListParams
-					json.Unmarshal(params, &p)
+					_ = json.Unmarshal(params, &p)
 					if p.Cursor != "cursor-page2" {
 						t.Errorf("expected cursor 'cursor-page2', got %q", p.Cursor)
 					}

@@ -25,7 +25,7 @@ func newMockMCPServer(t *testing.T, tools []mcpTool) *httptest.Server {
 
 		// Could be a notification (no id) or a request.
 		var raw map[string]json.RawMessage
-		json.Unmarshal(body, &raw)
+		_ = json.Unmarshal(body, &raw)
 
 		// Notification — no ID field.
 		if _, hasID := raw["id"]; !hasID {
@@ -34,7 +34,7 @@ func newMockMCPServer(t *testing.T, tools []mcpTool) *httptest.Server {
 		}
 
 		var req jsonrpcRequest
-		json.Unmarshal(body, &req)
+		_ = json.Unmarshal(body, &req)
 
 		var resp jsonrpcResponse
 		resp.JSONRPC = "2.0"
@@ -56,7 +56,7 @@ func newMockMCPServer(t *testing.T, tools []mcpTool) *httptest.Server {
 		case "tools/call":
 			data, _ := json.Marshal(req.Params)
 			var params toolCallParams
-			json.Unmarshal(data, &params)
+			_ = json.Unmarshal(data, &params)
 
 			result, _ := json.Marshal(toolCallResult{
 				Content: []contentBlock{{Type: "text", Text: "called:" + params.Name}},
@@ -71,7 +71,7 @@ func newMockMCPServer(t *testing.T, tools []mcpTool) *httptest.Server {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 }
 
@@ -86,13 +86,13 @@ func newMockMCPServerWithContent(t *testing.T, content string) *httptest.Server 
 		}
 		body, _ := io.ReadAll(r.Body)
 		var raw map[string]json.RawMessage
-		json.Unmarshal(body, &raw)
+		_ = json.Unmarshal(body, &raw)
 		if _, hasID := raw["id"]; !hasID {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 		var req jsonrpcRequest
-		json.Unmarshal(body, &req)
+		_ = json.Unmarshal(body, &req)
 
 		resp := jsonrpcResponse{JSONRPC: "2.0", ID: json.RawMessage(fmt.Sprintf("%d", req.ID))}
 		switch req.Method {
@@ -110,7 +110,7 @@ func newMockMCPServerWithContent(t *testing.T, content string) *httptest.Server 
 			resp.Error = &jsonrpcError{Code: -32601, Message: "method not found"}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 }
 
@@ -179,14 +179,14 @@ func TestCmdCall_AdhocURL_AuthToken(t *testing.T) {
 
 		body, _ := io.ReadAll(r.Body)
 		var raw map[string]json.RawMessage
-		json.Unmarshal(body, &raw)
+		_ = json.Unmarshal(body, &raw)
 		if _, hasID := raw["id"]; !hasID {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 
 		var req jsonrpcRequest
-		json.Unmarshal(body, &req)
+		_ = json.Unmarshal(body, &req)
 
 		resp := jsonrpcResponse{JSONRPC: "2.0", ID: json.RawMessage(fmt.Sprintf("%d", req.ID))}
 		switch req.Method {
@@ -202,7 +202,7 @@ func TestCmdCall_AdhocURL_AuthToken(t *testing.T) {
 			})
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer srv.Close()
 
@@ -277,14 +277,14 @@ func TestCmdCall_AdhocURL_DynamicFlagsAsStrings(t *testing.T) {
 		}
 		body, _ := io.ReadAll(r.Body)
 		var raw map[string]json.RawMessage
-		json.Unmarshal(body, &raw)
+		_ = json.Unmarshal(body, &raw)
 		if _, hasID := raw["id"]; !hasID {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 
 		var req jsonrpcRequest
-		json.Unmarshal(body, &req)
+		_ = json.Unmarshal(body, &req)
 
 		resp := jsonrpcResponse{JSONRPC: "2.0", ID: json.RawMessage(fmt.Sprintf("%d", req.ID))}
 		switch req.Method {
@@ -297,14 +297,14 @@ func TestCmdCall_AdhocURL_DynamicFlagsAsStrings(t *testing.T) {
 		case "tools/call":
 			data, _ := json.Marshal(req.Params)
 			var params toolCallParams
-			json.Unmarshal(data, &params)
+			_ = json.Unmarshal(data, &params)
 			gotArgs = params.Arguments
 			resp.Result, _ = json.Marshal(toolCallResult{
 				Content: []contentBlock{{Type: "text", Text: "ok"}},
 			})
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer srv.Close()
 
@@ -348,7 +348,7 @@ func TestCmdCall_RegisteredServer_StillWorks(t *testing.T) {
 	}
 
 	var out callOutput
-	json.Unmarshal([]byte(data), &out)
+	_ = json.Unmarshal([]byte(data), &out)
 	if out.Content != "called:echo" {
 		t.Errorf("expected 'called:echo', got %q", out.Content)
 	}

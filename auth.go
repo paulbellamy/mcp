@@ -174,7 +174,7 @@ func cmdAuth(args []string) error {
 	} else {
 		if authMeta.RegistrationEndpoint == "" {
 			if localListener != nil {
-				localListener.Close()
+				_ = localListener.Close()
 			}
 			return fmt.Errorf("server does not support dynamic client registration; set MCP_CLIENT_ID and MCP_CLIENT_SECRET env vars")
 		}
@@ -183,7 +183,7 @@ func cmdAuth(args []string) error {
 		reg, err := registerClient(authMeta, redirectURI)
 		if err != nil {
 			if localListener != nil {
-				localListener.Close()
+				_ = localListener.Close()
 			}
 			return fmt.Errorf("client registration failed: %w", err)
 		}
@@ -276,7 +276,7 @@ func cmdAuthCallback(args []string) error {
 	}
 
 	// Clean up pending state
-	os.Remove(pendingPath)
+	_ = os.Remove(pendingPath)
 
 	logStderr("authorization complete for %q", pending.ServerName)
 	return outputJSON(authOutput{
@@ -412,7 +412,7 @@ func registerClient(meta *authServerMetadata, redirectURI string) (*clientRegist
 	if err != nil {
 		return nil, fmt.Errorf("registration request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := readResponseBody(resp.Body)
 	if err != nil {
@@ -473,7 +473,7 @@ func doTokenRequest(tokenURL string, params url.Values, clientID, clientSecret s
 	if err != nil {
 		return nil, fmt.Errorf("token request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := readResponseBody(resp.Body)
 	if err != nil {
@@ -574,9 +574,9 @@ func fetchWellKnown(client *http.Client, wellKnownURL string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s: %w", wellKnownURL, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil, fmt.Errorf("%s returned %d", wellKnownURL, resp.StatusCode)
 	}
 	return readResponseBody(resp.Body)

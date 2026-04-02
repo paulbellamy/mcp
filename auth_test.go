@@ -121,7 +121,7 @@ func TestDiscoverOAuth_Metadata(t *testing.T) {
 				TokenEndpoint:         "https://auth.example.com/token",
 				RegistrationEndpoint:  "https://auth.example.com/register",
 			}
-			json.NewEncoder(w).Encode(meta)
+			_ = json.NewEncoder(w).Encode(meta)
 			return
 		}
 		w.WriteHeader(404)
@@ -135,7 +135,7 @@ func TestDiscoverOAuth_Metadata(t *testing.T) {
 				AuthorizationServers: []string{authSrv.URL},
 				Resource:             "https://api.example.com",
 			}
-			json.NewEncoder(w).Encode(prm)
+			_ = json.NewEncoder(w).Encode(prm)
 			return
 		}
 		w.WriteHeader(404)
@@ -160,7 +160,7 @@ func TestDiscoverOAuth_Metadata(t *testing.T) {
 func TestRegisterClient(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req clientRegistrationRequest
-		json.NewDecoder(r.Body).Decode(&req)
+		_ = json.NewDecoder(r.Body).Decode(&req)
 
 		if req.ClientName != "mcp-cli" {
 			t.Errorf("expected client name 'mcp-cli', got %q", req.ClientName)
@@ -170,7 +170,7 @@ func TestRegisterClient(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(clientRegistrationResponse{
+		_ = json.NewEncoder(w).Encode(clientRegistrationResponse{
 			ClientID:     "new-client-id",
 			ClientSecret: "new-client-secret",
 		})
@@ -195,7 +195,7 @@ func TestRegisterClient(t *testing.T) {
 
 func TestRefreshOAuthToken(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.ParseForm()
+		_ = r.ParseForm()
 		if r.Form.Get("grant_type") != "refresh_token" {
 			t.Errorf("expected grant_type=refresh_token, got %q", r.Form.Get("grant_type"))
 		}
@@ -203,7 +203,7 @@ func TestRefreshOAuthToken(t *testing.T) {
 			t.Errorf("expected refresh_token=old-rt, got %q", r.Form.Get("refresh_token"))
 		}
 
-		json.NewEncoder(w).Encode(tokenResponse{
+		_ = json.NewEncoder(w).Encode(tokenResponse{
 			AccessToken:  "new-at",
 			RefreshToken: "new-rt",
 			ExpiresIn:    3600,
@@ -330,7 +330,7 @@ func TestGetAuthToken_ExpiredWithRefresh(t *testing.T) {
 	setupTestConfigDir(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(tokenResponse{
+		_ = json.NewEncoder(w).Encode(tokenResponse{
 			AccessToken: "refreshed-at",
 			ExpiresIn:   3600,
 		})
@@ -370,7 +370,7 @@ func TestGetAuthToken_ExpiredWithRefresh(t *testing.T) {
 func TestFetchAuthServerMetadata_RejectsUnsupportedS256(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/oauth-authorization-server" {
-			json.NewEncoder(w).Encode(authServerMetadata{
+			_ = json.NewEncoder(w).Encode(authServerMetadata{
 				Issuer:                           "https://auth.example.com",
 				AuthorizationEndpoint:            "https://auth.example.com/authorize",
 				TokenEndpoint:                    "https://auth.example.com/token",
@@ -394,7 +394,7 @@ func TestFetchAuthServerMetadata_RejectsUnsupportedS256(t *testing.T) {
 func TestFetchAuthServerMetadata_AcceptsS256(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/oauth-authorization-server" {
-			json.NewEncoder(w).Encode(authServerMetadata{
+			_ = json.NewEncoder(w).Encode(authServerMetadata{
 				Issuer:                           "https://auth.example.com",
 				AuthorizationEndpoint:            "https://auth.example.com/authorize",
 				TokenEndpoint:                    "https://auth.example.com/token",
@@ -418,7 +418,7 @@ func TestFetchAuthServerMetadata_AcceptsS256(t *testing.T) {
 func TestFetchAuthServerMetadata_AcceptsEmptyMethods(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/oauth-authorization-server" {
-			json.NewEncoder(w).Encode(authServerMetadata{
+			_ = json.NewEncoder(w).Encode(authServerMetadata{
 				Issuer:                "https://auth.example.com",
 				AuthorizationEndpoint: "https://auth.example.com/authorize",
 				TokenEndpoint:         "https://auth.example.com/token",
@@ -449,7 +449,7 @@ func TestPrintUsage_NoAuthCallback(t *testing.T) {
 
 func TestRefreshOAuthToken_KeepsOldRefreshToken(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(tokenResponse{
+		_ = json.NewEncoder(w).Encode(tokenResponse{
 			AccessToken: "new-at",
 			// No new refresh token
 			ExpiresIn: 3600,

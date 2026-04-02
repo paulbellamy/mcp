@@ -23,7 +23,7 @@ func TestIntegration_FullLifecycle(t *testing.T) {
 	if err != nil {
 		t.Skipf("could not connect to test server: %v", err)
 	}
-	defer transport.Close()
+	defer func() { _ = transport.Close() }()
 
 	// List tools
 	tools, err := listAllTools(transport, "test")

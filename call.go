@@ -154,7 +154,7 @@ func cmdCall(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer transport.Close()
+	defer func() { _ = transport.Close() }()
 
 	// Call tool
 	output, err := executeToolCall(transport, toolName, params, stream)
@@ -348,7 +348,7 @@ func executeToolCall(transport Transport, toolName string, params map[string]any
 	if stream {
 		resp, err = transport.SendStreaming(req, func(evt streamEvent) {
 			data, _ := json.Marshal(evt)
-			fmt.Fprintln(os.Stdout, string(data))
+			_, _ = fmt.Fprintln(os.Stdout, string(data))
 		})
 	} else {
 		resp, err = transport.Send(req)

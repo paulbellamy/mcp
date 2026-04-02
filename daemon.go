@@ -54,7 +54,7 @@ func cmdDaemonStop() error {
 		return fmt.Errorf("find process: %w", err)
 	}
 	if err := proc.Signal(syscall.SIGTERM); err != nil {
-		os.Remove(daemonPIDPath())
+		_ = os.Remove(daemonPIDPath())
 		return fmt.Errorf("signal process: %w", err)
 	}
 	logStderr("sent SIGTERM to daemon (PID %d)", pid)
@@ -72,7 +72,7 @@ func cmdDaemonRun() error {
 				}
 			}
 		}
-		os.Remove(daemonPIDPath())
+		_ = os.Remove(daemonPIDPath())
 	}
 
 	// Ensure daemon socket directory exists
@@ -84,7 +84,7 @@ func cmdDaemonRun() error {
 	entries, _ := os.ReadDir(daemonSocketDir())
 	for _, e := range entries {
 		if strings.HasSuffix(e.Name(), ".sock") {
-			os.Remove(filepath.Join(daemonSocketDir(), e.Name()))
+			_ = os.Remove(filepath.Join(daemonSocketDir(), e.Name()))
 		}
 	}
 
@@ -92,7 +92,7 @@ func cmdDaemonRun() error {
 	if err := atomicWrite(daemonPIDPath(), []byte(strconv.Itoa(os.Getpid())+"\n")); err != nil {
 		return fmt.Errorf("write PID file: %w", err)
 	}
-	defer os.Remove(daemonPIDPath())
+	defer func() { _ = os.Remove(daemonPIDPath()) }()
 
 	servers, err := loadServers()
 	if err != nil {
@@ -183,11 +183,11 @@ func (d *daemon) startServer(config ServerConfig) (*managedServer, error) {
 		},
 	})
 	if err != nil {
-		transport.Close()
+		_ = transport.Close()
 		return nil, fmt.Errorf("initialize: %w", err)
 	}
 	if initResp.Error != nil {
-		transport.Close()
+		_ = transport.Close()
 		return nil, fmt.Errorf("initialize: %s", initResp.Error.Message)
 	}
 
@@ -195,19 +195,19 @@ func (d *daemon) startServer(config ServerConfig) (*managedServer, error) {
 		JSONRPC: jsonrpcVersion,
 		Method:  "notifications/initialized",
 	}); err != nil {
-		transport.Close()
+		_ = transport.Close()
 		return nil, fmt.Errorf("initialized notification: %w", err)
 	}
 
 	// Create Unix socket
 	sockPath := daemonSocketPath(config.Name)
-	os.Remove(sockPath)
+	_ = os.Remove(sockPath)
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
-		transport.Close()
+		_ = transport.Close()
 		return nil, fmt.Errorf("listen: %w", err)
 	}
-	os.Chmod(sockPath, 0600)
+	_ = os.Chmod(sockPath, 0600)
 
 	return &managedServer{
 		config:    config,
@@ -240,7 +240,7 @@ func (d *daemon) acceptLoop(ms *managedServer) {
 }
 
 func (d *daemon) handleClient(conn net.Conn, ms *managedServer) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	reader := bufio.NewReader(conn)
 
 	for {
@@ -266,7 +266,7 @@ func (d *daemon) handleClient(conn net.Conn, ms *managedServer) {
 			// Notification — forward, no response
 			var notif jsonrpcNotification
 			if err := json.Unmarshal(line, &notif); err == nil {
-				ms.transport.Notify(notif)
+				_ = ms.transport.Notify(notif)
 			}
 			continue
 		}
@@ -305,7 +305,7 @@ func (d *daemon) handleClient(conn net.Conn, ms *managedServer) {
 
 func (d *daemon) respawnServer(ms *managedServer) error {
 	logStderr("respawning %q...", ms.config.Name)
-	ms.transport.Close()
+	_ = ms.transport.Close()
 
 	transport, err := NewStdioTransport(ms.config.Command, ms.config.Args)
 	if err != nil {
@@ -323,11 +323,11 @@ func (d *daemon) respawnServer(ms *managedServer) error {
 		},
 	})
 	if err != nil {
-		transport.Close()
+		_ = transport.Close()
 		return err
 	}
 	if initResp.Error != nil {
-		transport.Close()
+		_ = transport.Close()
 		return fmt.Errorf("%s", initResp.Error.Message)
 	}
 
@@ -335,7 +335,7 @@ func (d *daemon) respawnServer(ms *managedServer) error {
 		JSONRPC: jsonrpcVersion,
 		Method:  "notifications/initialized",
 	}); err != nil {
-		transport.Close()
+		_ = transport.Close()
 		return err
 	}
 
@@ -346,8 +346,8 @@ func (d *daemon) respawnServer(ms *managedServer) error {
 
 func (d *daemon) shutdown() {
 	for name, ms := range d.servers {
-		ms.listener.Close()
-		os.Remove(daemonSocketPath(name))
-		ms.transport.Close()
+		_ = ms.listener.Close()
+		_ = os.Remove(daemonSocketPath(name))
+		_ = ms.transport.Close()
 	}
 }
