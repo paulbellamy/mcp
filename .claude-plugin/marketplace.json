@@ -1,8 +1,5 @@
 {
-  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "mcp-cli",
-  "version": "0.2.0",
-  "description": "Connect to and use external MCP tool servers via the mcp CLI",
   "owner": {
     "name": "Paul Bellamy"
   },
