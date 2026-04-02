@@ -2,7 +2,9 @@
   "name": "mcp-cli",
   "description": "Connect to and use external MCP tool servers via the mcp CLI",
   "version": "0.2.0",
-  "author": "Paul Bellamy",
+  "author": {
+    "name": "Paul Bellamy"
+  },
   "license": "MIT",
   "homepage": "https://github.com/paulbellamy/mcp",
   "repository": "https://github.com/paulbellamy/mcp"
