@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "mcp-cli",
-      "source": ".",
+      "source": "./",
       "description": "Connect to and use external MCP tool servers via the mcp CLI",
       "category": "development"
     }
