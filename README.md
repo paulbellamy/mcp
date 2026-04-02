@@ -7,7 +7,8 @@ A CLI tool for discovering and calling tools on external [MCP](https://modelcont
 ### Claude Code plugin
 
 ```bash
-claude plugin add --marketplace https://github.com/paulbellamy/mcp
+claude plugin marketplace add https://github.com/paulbellamy/mcp
+claude plugin install mcp-cli
 ```
 
 ### Binary
