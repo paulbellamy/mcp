@@ -382,6 +382,7 @@ func (t *HTTPTransport) Notify(notif jsonrpcNotification) error {
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json, text/event-stream")
 	if t.authToken != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+t.authToken)
 	}

@@ -202,8 +202,10 @@ func TestHTTPTransport_NonOKStatus(t *testing.T) {
 
 func TestHTTPTransport_Notification(t *testing.T) {
 	var received bool
+	var receivedAccept string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		received = true
+		receivedAccept = r.Header.Get("Accept")
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -215,6 +217,9 @@ func TestHTTPTransport_Notification(t *testing.T) {
 	}
 	if !received {
 		t.Error("server did not receive notification")
+	}
+	if receivedAccept != "application/json, text/event-stream" {
+		t.Errorf("expected Accept header 'application/json, text/event-stream', got %q", receivedAccept)
 	}
 }
 
