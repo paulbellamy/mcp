@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -203,5 +204,89 @@ func TestCoerceDynamicFlags_UnknownFlag(t *testing.T) {
 	}
 	if result["unknown"] != "value" {
 		t.Errorf("expected unknown flag passed as string, got %v", result["unknown"])
+	}
+}
+
+func TestCmdSchema_UsageError(t *testing.T) {
+	if err := cmdSchema(nil); err == nil {
+		t.Error("expected usage error for no args")
+	}
+	if err := cmdSchema([]string{"server"}); err == nil {
+		t.Error("expected usage error for missing tool")
+	}
+}
+
+func TestCmdSchema_InvalidNames(t *testing.T) {
+	if err := cmdSchema([]string{"bad name", "tool"}); err == nil {
+		t.Error("expected error for invalid server name")
+	}
+	if err := cmdSchema([]string{"server", "bad tool"}); err == nil {
+		t.Error("expected error for invalid tool name")
+	}
+}
+
+func TestCmdSchema_FromCache(t *testing.T) {
+	setupTestConfigDir(t)
+
+	tools := []toolOutput{
+		{
+			Server:      "srv",
+			Name:        "search",
+			Description: "Search for items",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}}}`),
+		},
+	}
+	if err := saveCachedTools("srv", tools); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout := captureStdout(t, func() {
+		if err := cmdSchema([]string{"srv", "search"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	var got toolOutput
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("invalid JSON: %s", stdout)
+	}
+	if got.Name != "search" {
+		t.Errorf("expected name 'search', got %q", got.Name)
+	}
+	if got.Description != "Search for items" {
+		t.Errorf("expected description, got %q", got.Description)
+	}
+	if len(got.InputSchema) == 0 {
+		t.Error("expected inputSchema to be present")
+	}
+}
+
+func TestCmdSchema_ToolNotFound(t *testing.T) {
+	setupTestConfigDir(t)
+
+	tools := []toolOutput{
+		{Server: "srv", Name: "search"},
+	}
+	if err := saveCachedTools("srv", tools); err != nil {
+		t.Fatal(err)
+	}
+
+	err := cmdSchema([]string{"srv", "unknown"})
+	if err == nil {
+		t.Fatal("expected error for missing tool")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestCmdSchema_UnknownFlag(t *testing.T) {
+	setupTestConfigDir(t)
+	tools := []toolOutput{{Server: "srv", Name: "tool"}}
+	if err := saveCachedTools("srv", tools); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdSchema([]string{"srv", "tool", "--bogus"}); err == nil {
+		t.Error("expected error for unknown flag")
 	}
 }
