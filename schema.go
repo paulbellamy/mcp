@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 // toolParam represents a single parameter extracted from a tool's JSON Schema.
@@ -143,6 +144,17 @@ func getToolSchema(serverName, toolName string) ([]toolParam, error) {
 // Outputs the full schema for a single tool — the on-demand half of
 // the lazy schema loading pattern.
 func cmdSchema(args []string) error {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			_, _ = fmt.Fprintln(os.Stderr, `Usage: mcp schema <server> <tool>
+
+Print the full JSON schema for a specific tool. Reads from the local cache;
+falls back to a live discover if no cache exists. Run
+"mcp tools <server> --refresh" to update.`)
+			return nil
+		}
+	}
+
 	if len(args) < 2 {
 		return fmt.Errorf("usage: mcp schema <server> <tool>")
 	}
@@ -157,17 +169,12 @@ func cmdSchema(args []string) error {
 		return err
 	}
 
-	for _, arg := range args[2:] {
-		switch arg {
-		case "--help", "-h":
-			fmt.Fprintln(os.Stderr, `Usage: mcp schema <server> <tool>
-
-Print the full JSON schema for a specific tool.
-Reads from the local cache; run "mcp tools <server> --refresh" to update.`)
-			return nil
-		default:
-			return fmt.Errorf("unknown flag: %s", arg)
+	if len(args) > 2 {
+		extra := args[2]
+		if strings.HasPrefix(extra, "-") {
+			return fmt.Errorf("unknown flag: %s", extra)
 		}
+		return fmt.Errorf("unexpected argument: %s", extra)
 	}
 
 	tools, err := loadCachedToolsStale(serverName)

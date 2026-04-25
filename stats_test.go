@@ -127,6 +127,33 @@ func TestCmdStats_FullIncludesPerToolBreakdown(t *testing.T) {
 	}
 }
 
+func TestCmdStats_SkipsServersWithoutCache(t *testing.T) {
+	setupTestConfigDir(t)
+
+	if err := addServerConfig(ServerConfig{
+		Name:      "uncached",
+		Transport: "streamable-http",
+		URL:       "http://example.invalid",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stderr := captureStderr(t, func() {
+		stdout := captureStdout(t, func() {
+			if err := cmdStats(nil); err != nil {
+				t.Fatal(err)
+			}
+		})
+		// Should not have made a network call — table renders with zero rows.
+		if strings.Contains(stdout, "uncached") {
+			t.Errorf("server with no cache should be skipped from table:\n%s", stdout)
+		}
+	})
+	if !strings.Contains(stderr, "no cached tools") {
+		t.Errorf("expected stderr warning about uncached server, got %q", stderr)
+	}
+}
+
 func TestCmdStats_SkipsDisabledServers(t *testing.T) {
 	setupTestConfigDir(t)
 

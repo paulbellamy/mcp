@@ -248,6 +248,57 @@ func TestCmdTools_AdhocURL(t *testing.T) {
 	}
 }
 
+func TestCmdTools_AdhocURL_CompactByDefault(t *testing.T) {
+	setupTestConfigDir(t)
+	srv := newMockMCPServer(t, []mcpTool{
+		{
+			Name:        "tool-a",
+			Description: "first",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`),
+		},
+	})
+	defer srv.Close()
+
+	data := captureStdout(t, func() {
+		if err := cmdTools([]string{srv.URL, "--json"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	if strings.Contains(data, "inputSchema") {
+		t.Errorf("ad-hoc compact output should not contain inputSchema:\n%s", data)
+	}
+}
+
+func TestCmdTools_AdhocURL_Full(t *testing.T) {
+	setupTestConfigDir(t)
+	srv := newMockMCPServer(t, []mcpTool{
+		{
+			Name:        "tool-a",
+			Description: "first",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`),
+		},
+	})
+	defer srv.Close()
+
+	data := captureStdout(t, func() {
+		if err := cmdTools([]string{srv.URL, "--json", "--full"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	var tools []toolOutput
+	if err := json.Unmarshal([]byte(data), &tools); err != nil {
+		t.Fatalf("invalid JSON: %s", data)
+	}
+	if len(tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(tools))
+	}
+	if len(tools[0].InputSchema) == 0 {
+		t.Errorf("expected inputSchema in --full ad-hoc output, got: %s", data)
+	}
+}
+
 func TestCmdPing_AdhocURL(t *testing.T) {
 	setupTestConfigDir(t)
 	srv := newMockMCPServer(t, nil)

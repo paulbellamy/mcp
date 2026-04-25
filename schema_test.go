@@ -290,3 +290,63 @@ func TestCmdSchema_UnknownFlag(t *testing.T) {
 		t.Error("expected error for unknown flag")
 	}
 }
+
+func TestCmdSchema_HelpFlagNoArgs(t *testing.T) {
+	stderr := captureStderr(t, func() {
+		if err := cmdSchema([]string{"--help"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(stderr, "Usage: mcp schema") {
+		t.Errorf("expected usage in --help output, got %q", stderr)
+	}
+
+	stderr = captureStderr(t, func() {
+		if err := cmdSchema([]string{"-h"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(stderr, "Usage: mcp schema") {
+		t.Errorf("expected usage in -h output, got %q", stderr)
+	}
+}
+
+func TestCmdSchema_LiveFetchOnCacheMiss(t *testing.T) {
+	setupTestConfigDir(t)
+
+	srv := newMockMCPServer(t, []mcpTool{
+		{
+			Name:        "tool-a",
+			Description: "first",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`),
+		},
+		{Name: "tool-b", Description: "second"},
+	})
+	defer srv.Close()
+
+	if err := addServerConfig(ServerConfig{
+		Name:      "srv",
+		Transport: "streamable-http",
+		URL:       srv.URL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// No saveCachedTools call — forces the fallback to live discover.
+
+	stdout := captureStdout(t, func() {
+		if err := cmdSchema([]string{"srv", "tool-a"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	var got toolOutput
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("invalid JSON: %s", stdout)
+	}
+	if got.Name != "tool-a" {
+		t.Errorf("expected name 'tool-a', got %q", got.Name)
+	}
+	if len(got.InputSchema) == 0 {
+		t.Error("expected inputSchema to be present after live fetch")
+	}
+}

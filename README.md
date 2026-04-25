@@ -33,8 +33,17 @@ mcp servers
 mcp add <name> <url>
 mcp add <name> --stdio <command> [args...]
 
-# Discover tools
+# Discover tools (compact summaries — name + description only)
 mcp tools [server] [--query "search term"] [--refresh]
+
+# Include full inputSchema for every tool (large; usually not needed)
+mcp tools --full
+
+# Fetch the full schema for one tool on demand
+mcp schema <server> <tool>
+
+# Estimate the token cost of cached schemas across servers
+mcp stats [--full]
 
 # Call a tool
 mcp call <server> <tool> --params '{"key": "value"}'

@@ -57,6 +57,7 @@ mcp tools --full
 ```bash
 # Returns name, description, and the full JSON Schema for one tool.
 # Use this once you've decided which tool to call.
+# Reads from the local cache; falls back to a live discover if no cache exists.
 mcp schema <server> <tool>
 ```
 
@@ -64,6 +65,7 @@ mcp schema <server> <tool>
 ```bash
 # Estimate how many tokens each server's schemas would consume.
 # Shows the savings of compact summaries vs full schemas.
+# Cache-only — run `mcp tools <server> --refresh` first if a server is empty.
 mcp stats
 
 # Per-tool breakdown
@@ -84,7 +86,7 @@ mcp call <server> <tool> --query "hello" --limit 10
 # Stream progress for long-running tools (NDJSON to stdout)
 mcp call <server> <tool> --stream --params '{"key": "value"}'
 
-# Show parameters for a single tool (reads from cache)
+# Show parameters for a single tool (reads from cache; live-fetches if missing)
 mcp call <server> <tool> --help
 ```
 

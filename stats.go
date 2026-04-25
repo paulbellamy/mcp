@@ -18,9 +18,11 @@ func estimateTokens(v any) int {
 	return len(data) / 4
 }
 
-// summaryFor returns the compact name+description payload for a tool.
+// summaryFor returns the compact payload for a tool that `mcp tools` emits
+// in its JSON output (server + name + description, no schema).
 func summaryFor(t toolOutput) map[string]string {
 	return map[string]string{
+		"server":      t.Server,
 		"name":        t.Name,
 		"description": t.Description,
 	}
@@ -28,6 +30,7 @@ func summaryFor(t toolOutput) map[string]string {
 
 // cmdStats handles the `mcp stats` command.
 // Reports estimated token cost of full schemas vs compact summaries per server.
+// Reads from the local cache only — does not connect to servers.
 func cmdStats(args []string) error {
 	var full bool
 	for _, arg := range args {
@@ -35,10 +38,12 @@ func cmdStats(args []string) error {
 		case "--full":
 			full = true
 		case "--help", "-h":
-			fmt.Fprintln(os.Stderr, `Usage: mcp stats [--full]
+			_, _ = fmt.Fprintln(os.Stderr, `Usage: mcp stats [--full]
 
 Estimates the token cost of tool schemas across configured servers.
-Token counts are approximate (~4 chars per token).
+Reads from the local cache only — run "mcp tools <server> --refresh" first
+if a server has never been queried. Token counts are approximate
+(~4 chars per token).
 
 Flags:
   --full    Include per-tool breakdown.`)
@@ -53,7 +58,7 @@ Flags:
 		return err
 	}
 	if len(servers) == 0 {
-		fmt.Fprintln(os.Stderr, "No servers configured.")
+		_, _ = fmt.Fprintln(os.Stderr, "No servers configured.")
 		return nil
 	}
 
@@ -74,10 +79,13 @@ Flags:
 		if !s.IsEnabled() {
 			continue
 		}
-		s := s
-		tools, err := getToolsForServer(&s, false)
+		tools, err := loadCachedToolsStale(s.Name)
 		if err != nil {
-			logStderr("warning: failed to get tools from %q: %v", s.Name, err)
+			logStderr("warning: cache read failed for %q: %v", s.Name, err)
+			continue
+		}
+		if tools == nil {
+			logStderr("warning: no cached tools for %q (run `mcp tools %s --refresh`)", s.Name, s.Name)
 			continue
 		}
 
@@ -126,21 +134,36 @@ Flags:
 		_, _ = fmt.Fprintln(os.Stdout)
 	}
 
-	_, _ = fmt.Fprintf(os.Stdout, "%-15s %5s  %14s  %14s  %7s\n", "Server", "Tools", "Schema Tokens", "Summary Tokens", "Savings")
-	_, _ = fmt.Fprintln(os.Stdout, strings.Repeat("-", 64))
+	// Server column widens to fit the longest name (min 15 for header).
+	nameWidth := len("Server")
+	for _, ss := range stats {
+		if len(ss.name) > nameWidth {
+			nameWidth = len(ss.name)
+		}
+	}
+	if nameWidth < 15 {
+		nameWidth = 15
+	}
+
+	rowFmt := fmt.Sprintf("%%-%ds %%5s  %%14s  %%14s  %%7s\n", nameWidth)
+	dataFmt := fmt.Sprintf("%%-%ds %%5d  %%14d  %%14d  %%6d%%%%\n", nameWidth)
+	ruleWidth := nameWidth + 1 + 5 + 2 + 14 + 2 + 14 + 2 + 8
+
+	_, _ = fmt.Fprintf(os.Stdout, rowFmt, "Server", "Tools", "Schema Tokens", "Summary Tokens", "Savings")
+	_, _ = fmt.Fprintln(os.Stdout, strings.Repeat("-", ruleWidth))
 	for _, ss := range stats {
 		savings := 0
 		if ss.schemaTokens > 0 {
 			savings = 100 - (ss.summaryTokens * 100 / ss.schemaTokens)
 		}
-		_, _ = fmt.Fprintf(os.Stdout, "%-15s %5d  %14d  %14d  %6d%%\n", ss.name, ss.toolCount, ss.schemaTokens, ss.summaryTokens, savings)
+		_, _ = fmt.Fprintf(os.Stdout, dataFmt, ss.name, ss.toolCount, ss.schemaTokens, ss.summaryTokens, savings)
 	}
-	_, _ = fmt.Fprintln(os.Stdout, strings.Repeat("-", 64))
+	_, _ = fmt.Fprintln(os.Stdout, strings.Repeat("-", ruleWidth))
 	totalSavings := 0
 	if totalSchemaTokens > 0 {
 		totalSavings = 100 - (totalSummaryTokens * 100 / totalSchemaTokens)
 	}
-	_, _ = fmt.Fprintf(os.Stdout, "%-15s %5d  %14d  %14d  %6d%%\n", "Total", totalTools, totalSchemaTokens, totalSummaryTokens, totalSavings)
+	_, _ = fmt.Fprintf(os.Stdout, dataFmt, "Total", totalTools, totalSchemaTokens, totalSummaryTokens, totalSavings)
 
 	return nil
 }
