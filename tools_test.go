@@ -250,3 +250,64 @@ func TestPrintToolsHuman_Empty(t *testing.T) {
 		t.Errorf("expected 'No tools found', got %q", output)
 	}
 }
+
+func TestOutputToolsList_CompactByDefault(t *testing.T) {
+	tools := []toolOutput{
+		{
+			Server:      "srv",
+			Name:        "search",
+			Description: "Search items",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`),
+		},
+	}
+
+	out := captureStdout(t, func() {
+		if err := outputToolsList(tools, "", true, false); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	var got []toolOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("invalid JSON: %s", out)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(got))
+	}
+	if got[0].Name != "search" {
+		t.Errorf("expected name 'search', got %q", got[0].Name)
+	}
+	if len(got[0].InputSchema) != 0 {
+		t.Errorf("expected inputSchema to be omitted, got %s", string(got[0].InputSchema))
+	}
+
+	// And it shouldn't appear in the raw JSON either.
+	if strings.Contains(out, "inputSchema") {
+		t.Errorf("compact JSON should not contain 'inputSchema':\n%s", out)
+	}
+}
+
+func TestOutputToolsList_FullIncludesSchema(t *testing.T) {
+	tools := []toolOutput{
+		{
+			Server:      "srv",
+			Name:        "search",
+			Description: "Search items",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`),
+		},
+	}
+
+	out := captureStdout(t, func() {
+		if err := outputToolsList(tools, "", true, true); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	var got []toolOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("invalid JSON: %s", out)
+	}
+	if len(got) != 1 || len(got[0].InputSchema) == 0 {
+		t.Errorf("expected inputSchema to be present in --full output:\n%s", out)
+	}
+}

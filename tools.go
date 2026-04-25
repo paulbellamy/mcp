@@ -241,9 +241,9 @@ func refreshTokenWithLock(name string, tokens *AuthTokens) (*AuthTokens, error) 
 // cmdTools handles the `mcp tools` command.
 func cmdTools(args []string) error {
 	var serverFilter, query string
-	var refresh, jsonOutput bool
+	var refresh, jsonOutput, full bool
 
-	// Parse args: mcp tools [server] [--query <search>] [--refresh] [--json]
+	// Parse args: mcp tools [server] [--query <search>] [--refresh] [--json] [--full]
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--query", "-q":
@@ -256,6 +256,8 @@ func cmdTools(args []string) error {
 			refresh = true
 		case "--json":
 			jsonOutput = true
+		case "--full":
+			full = true
 		default:
 			if strings.HasPrefix(args[i], "--") || strings.HasPrefix(args[i], "-") {
 				return fmt.Errorf("unknown flag: %s", args[i])
@@ -278,7 +280,7 @@ func cmdTools(args []string) error {
 		if err != nil {
 			return err
 		}
-		return outputToolsList(tools, query, jsonOutput)
+		return outputToolsList(tools, query, jsonOutput, full)
 	}
 
 	if serverFilter != "" {
@@ -327,11 +329,13 @@ func cmdTools(args []string) error {
 	}
 	wg.Wait()
 
-	return outputToolsList(allTools, query, jsonOutput)
+	return outputToolsList(allTools, query, jsonOutput, full)
 }
 
 // outputToolsList sorts, filters, and outputs a list of tools.
-func outputToolsList(tools []toolOutput, query string, jsonOutput bool) error {
+// When full is false, the inputSchema field is stripped from JSON output —
+// callers should fetch full schemas on demand via `mcp schema <server> <tool>`.
+func outputToolsList(tools []toolOutput, query string, jsonOutput, full bool) error {
 	sort.Slice(tools, func(i, j int) bool {
 		if tools[i].Server != tools[j].Server {
 			return tools[i].Server < tools[j].Server
@@ -356,6 +360,17 @@ func outputToolsList(tools []toolOutput, query string, jsonOutput bool) error {
 	}
 
 	if jsonOutput || !isStdoutTTY() {
+		if !full {
+			compact := make([]toolOutput, len(tools))
+			for i, t := range tools {
+				compact[i] = toolOutput{
+					Server:      t.Server,
+					Name:        t.Name,
+					Description: t.Description,
+				}
+			}
+			return outputJSON(compact)
+		}
 		return outputJSON(tools)
 	}
 	return printToolsHuman(tools)

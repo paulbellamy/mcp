@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 // toolParam represents a single parameter extracted from a tool's JSON Schema.
@@ -136,4 +138,64 @@ func getToolSchema(serverName, toolName string) ([]toolParam, error) {
 		}
 	}
 	return nil, fmt.Errorf("tool %q not found in cache for server %q", toolName, serverName)
+}
+
+// cmdSchema handles the `mcp schema <server> <tool>` command.
+// Outputs the full schema for a single tool — the on-demand half of
+// the lazy schema loading pattern.
+func cmdSchema(args []string) error {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			_, _ = fmt.Fprintln(os.Stderr, `Usage: mcp schema <server> <tool>
+
+Print the full JSON schema for a specific tool. Reads from the local cache;
+falls back to a live discover if no cache exists. Run
+"mcp tools <server> --refresh" to update.`)
+			return nil
+		}
+	}
+
+	if len(args) < 2 {
+		return fmt.Errorf("usage: mcp schema <server> <tool>")
+	}
+
+	serverName := args[0]
+	toolName := args[1]
+
+	if err := validateServerName(serverName); err != nil {
+		return err
+	}
+	if err := validateToolName(toolName); err != nil {
+		return err
+	}
+
+	if len(args) > 2 {
+		extra := args[2]
+		if strings.HasPrefix(extra, "-") {
+			return fmt.Errorf("unknown flag: %s", extra)
+		}
+		return fmt.Errorf("unexpected argument: %s", extra)
+	}
+
+	tools, err := loadCachedToolsStale(serverName)
+	if err != nil {
+		return fmt.Errorf("read cache: %w", err)
+	}
+	if tools == nil {
+		server, err := getServerConfig(serverName)
+		if err != nil {
+			return err
+		}
+		tools, err = getToolsForServer(server, false)
+		if err != nil {
+			return fmt.Errorf("discover tools: %w", err)
+		}
+	}
+
+	for i := range tools {
+		if tools[i].Name == toolName {
+			return outputJSON(tools[i])
+		}
+	}
+	return fmt.Errorf("tool %q not found on server %q", toolName, serverName)
 }

@@ -31,6 +31,10 @@ func main() {
 		err = cmdRemove(cmdArgs)
 	case "tools":
 		err = cmdTools(cmdArgs)
+	case "schema":
+		err = cmdSchema(cmdArgs)
+	case "stats":
+		err = cmdStats(cmdArgs)
 	case "call":
 		err = cmdCall(cmdArgs)
 	case "auth":
@@ -73,7 +77,9 @@ Commands:
   remove <name>                  Remove a server
   enable <name>                  Enable a server
   disable <name>                 Disable a server
-  tools [server|url] [--query q]  List available tools
+  tools [server|url] [flags]     List available tools (compact by default)
+  schema <server> <tool>         Show full schema for a tool
+  stats [--full]                 Show estimated token cost of tool schemas
   call <server|url> <tool> ...   Call a tool
   auth <name> [flags]            Authenticate with a server
   ping <server|url>               Ping a server (liveness check)
@@ -91,6 +97,7 @@ Call flags:
 
 Tools flags:
   --query <q>                    Filter tools by name/description
+  --full                         Include inputSchema in output (default: compact)
   --refresh                      Force refresh from server
   --json                         Output as JSON (default: human-readable)
 
