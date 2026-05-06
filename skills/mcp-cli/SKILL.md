@@ -1,12 +1,38 @@
 ---
 name: mcp-cli
-description: "Connect to and use external MCP tool servers via the `mcp` CLI."
+description: "Discover and call MCP tools via the `mcp` CLI. Use when the needed tool is not exposed as a native `mcp__<server>__<tool>` in your tool list, when given an ad-hoc server URL, when you need to search across servers, or when context budget rules out loading a large catalogue natively."
 ---
 
 # MCP CLI
 
 Use the `mcp` CLI to discover and call tools on external MCP servers.
 All commands run via bash. Output is JSON on stdout, logs on stderr.
+
+## When to use this skill
+
+**Decision rule:** if the tool you need is already loaded as
+`mcp__<server>__<tool>` in your tool list, call it natively. Otherwise, use
+this CLI.
+
+**Use this skill when:**
+- The tool you need is not in your native tool list (server isn't loaded, or
+  the user gave you an ad-hoc URL).
+- The user pasted/named a server URL — call it with `mcp tools <url>` rather
+  than asking them to register it.
+- The native catalogue would be huge but you only need one or two tools — pay
+  for one schema via `mcp schema`, not the entire catalogue's tax every turn.
+- You need to search across every connected server (`mcp tools --query`).
+- You want to pipe tool output through `jq`, capture it, or chain calls.
+- You need token-cost visibility (`mcp stats`).
+
+**Skip this skill when:**
+- The tool is already loaded as `mcp__<server>__<tool>` and you'll call it
+  more than once or twice this session — native is faster (no schema fetch,
+  no JSON-string escaping).
+- Args are deeply nested or strongly typed and JSON-escaping is brittle.
+
+If both paths are open, prefer native for repeat calls and prefer this CLI
+for one-shot, ad-hoc, or multi-server exploration.
 
 ## Lazy Schema Loading
 
@@ -110,6 +136,9 @@ mcp remove <name>
 ```
 
 ## Workflow
+
+If the tool you need is already exposed as `mcp__<server>__<tool>` in your
+tool list, call it natively and skip the rest of this skill.
 
 1. Check what servers are available: `mcp servers`
 2. If the user asks to connect a new MCP server: `mcp add <name> <url>`
