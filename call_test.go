@@ -52,6 +52,36 @@ func TestCmdCall_UnexpectedPositionalArg(t *testing.T) {
 	}
 }
 
+func TestCmdCall_InvalidTimeout(t *testing.T) {
+	err := cmdCall([]string{"server", "tool", "--timeout", "not-a-duration"})
+	if err == nil {
+		t.Fatal("expected error for invalid timeout")
+	}
+	if !strings.Contains(err.Error(), "--timeout") {
+		t.Errorf("expected error mentioning --timeout, got: %v", err)
+	}
+}
+
+func TestCmdCall_NegativeTimeout(t *testing.T) {
+	err := cmdCall([]string{"server", "tool", "--timeout", "-5s"})
+	if err == nil {
+		t.Fatal("expected error for negative timeout")
+	}
+	if !strings.Contains(err.Error(), ">=") {
+		t.Errorf("expected error about non-negative, got: %v", err)
+	}
+}
+
+func TestCmdCall_MissingTimeoutValue(t *testing.T) {
+	err := cmdCall([]string{"server", "tool", "--timeout"})
+	if err == nil {
+		t.Fatal("expected error for missing timeout value")
+	}
+	if !strings.Contains(err.Error(), "requires a value") {
+		t.Errorf("expected 'requires a value' error, got: %v", err)
+	}
+}
+
 func TestRenderContent_TextBlock(t *testing.T) {
 	result := toolCallResult{
 		Content: []contentBlock{{Type: "text", Text: "hello world"}},

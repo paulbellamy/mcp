@@ -422,14 +422,28 @@ func TestStdioTransport_MismatchedID(t *testing.T) {
 	}
 }
 
-func TestNewHTTPTransport_SetsClientTimeout(t *testing.T) {
+func TestNewHTTPTransport_SetsDefaultTimeouts(t *testing.T) {
 	tr := NewHTTPTransport("http://example.com", "")
-	if tr.client.Timeout != 10*time.Minute {
-		t.Errorf("expected client timeout 10m, got %v", tr.client.Timeout)
+	if tr.requestTimeout != defaultHTTPSendTimeout {
+		t.Errorf("expected requestTimeout %v, got %v", defaultHTTPSendTimeout, tr.requestTimeout)
+	}
+	if tr.streamTimeout != defaultHTTPStreamTimeout {
+		t.Errorf("expected streamTimeout %v, got %v", defaultHTTPStreamTimeout, tr.streamTimeout)
 	}
 }
 
-func TestHTTPTransport_ClientTimeoutFallback(t *testing.T) {
+func TestHTTPTransport_SetTimeout(t *testing.T) {
+	tr := NewHTTPTransport("http://example.com", "")
+	tr.SetTimeout(30 * time.Second)
+	if tr.requestTimeout != 30*time.Second {
+		t.Errorf("expected requestTimeout 30s, got %v", tr.requestTimeout)
+	}
+	if tr.streamTimeout != 30*time.Second {
+		t.Errorf("expected streamTimeout 30s, got %v", tr.streamTimeout)
+	}
+}
+
+func TestHTTPTransport_TimeoutReportedClearly(t *testing.T) {
 	done := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Block until test completes
@@ -440,17 +454,25 @@ func TestHTTPTransport_ClientTimeoutFallback(t *testing.T) {
 		srv.Close()
 	}()
 
-	transport := &HTTPTransport{
-		url:    srv.URL,
-		client: &http.Client{Timeout: 50 * time.Millisecond},
-	}
+	transport := NewHTTPTransport(srv.URL, "")
+	transport.SetTimeout(50 * time.Millisecond)
 	_, err := transport.Send(jsonrpcRequest{JSONRPC: "2.0", ID: 1, Method: "test"})
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
 	errStr := err.Error()
-	if !strings.Contains(errStr, "deadline exceeded") && !strings.Contains(errStr, "Timeout") {
-		t.Errorf("expected deadline/timeout error, got %q", errStr)
+	if !strings.Contains(errStr, "timed out") || !strings.Contains(errStr, "--timeout") {
+		t.Errorf("expected annotated timeout error mentioning --timeout, got %q", errStr)
+	}
+}
+
+func TestHTTPTransport_NoTimeoutWhenZero(t *testing.T) {
+	tr := NewHTTPTransport("http://example.com", "")
+	tr.SetTimeout(0)
+	ctx, cancel := contextWithOptionalTimeout(tr.requestTimeout)
+	defer cancel()
+	if _, ok := ctx.Deadline(); ok {
+		t.Errorf("expected no deadline when timeout=0, but got one")
 	}
 }
 

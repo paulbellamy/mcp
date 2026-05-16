@@ -93,6 +93,8 @@ Call flags:
   --params '{"key":"val"}'       Tool parameters as JSON (or pipe via stdin)
   --stream                       Stream progress events as NDJSON
   --max-output N                 Truncate output to N chars (default 30000)
+  --timeout <duration>           Per-call timeout (e.g. 30s, 5m; 0 = no limit)
+                                 Default: 2m for plain calls, 5m for --stream
   --help                         Show tool description and parameters
 
 Tools flags:
