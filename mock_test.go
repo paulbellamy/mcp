@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"testing"
+	"time"
 )
 
 // captureStdout calls fn and returns everything written to os.Stdout.
@@ -40,10 +41,11 @@ func captureStderr(t *testing.T, fn func()) string {
 
 // mockTransport implements Transport for testing.
 type mockTransport struct {
-	sendFunc   func(req jsonrpcRequest) (jsonrpcResponse, error)
-	streamFunc func(req jsonrpcRequest, onEvent func(streamEvent)) (jsonrpcResponse, error)
-	notifyFunc func(notif jsonrpcNotification) error
-	closeFunc  func() error
+	sendFunc    func(req jsonrpcRequest) (jsonrpcResponse, error)
+	streamFunc  func(req jsonrpcRequest, onEvent func(streamEvent)) (jsonrpcResponse, error)
+	notifyFunc  func(notif jsonrpcNotification) error
+	closeFunc   func() error
+	lastTimeout time.Duration
 }
 
 func (m *mockTransport) Send(req jsonrpcRequest) (jsonrpcResponse, error) {
@@ -72,6 +74,10 @@ func (m *mockTransport) Close() error {
 		return m.closeFunc()
 	}
 	return nil
+}
+
+func (m *mockTransport) SetTimeout(d time.Duration) {
+	m.lastTimeout = d
 }
 
 // setupTestConfig sets up an isolated config dir for tests.

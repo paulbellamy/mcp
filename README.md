@@ -109,6 +109,9 @@ mcp call <server> <tool> --params '{"key": "value"}'
 # Stream progress for long-running tools
 mcp call <server> <tool> --stream --params '{"key": "value"}'
 
+# Override the per-call timeout (default: 2m plain / 5m streaming; 0 = no limit)
+mcp call <server> <tool> --timeout 10m --params '{"key": "value"}'
+
 # Authenticate
 mcp auth <name> --callback-url <url>
 

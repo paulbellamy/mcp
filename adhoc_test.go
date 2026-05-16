@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // newMockMCPServer creates an httptest.Server that speaks enough MCP protocol
@@ -402,5 +403,60 @@ func TestCmdCall_RegisteredServer_StillWorks(t *testing.T) {
 	_ = json.Unmarshal([]byte(data), &out)
 	if out.Content != "called:echo" {
 		t.Errorf("expected 'called:echo', got %q", out.Content)
+	}
+}
+
+// TestCmdCall_TimeoutForwarded verifies that --timeout reaches the transport.
+// The server answers initialize quickly but sleeps on tools/call; the call must
+// fail with the annotated timeout error if --timeout fires before the response.
+func TestCmdCall_TimeoutForwarded(t *testing.T) {
+	setupTestConfigDir(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "DELETE" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		var raw map[string]json.RawMessage
+		_ = json.Unmarshal(body, &raw)
+		if _, hasID := raw["id"]; !hasID {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		var req jsonrpcRequest
+		_ = json.Unmarshal(body, &req)
+
+		resp := jsonrpcResponse{JSONRPC: "2.0", ID: json.RawMessage(fmt.Sprintf("%d", req.ID))}
+		switch req.Method {
+		case "initialize":
+			resp.Result, _ = json.Marshal(map[string]any{
+				"protocolVersion": "2025-03-26",
+				"capabilities":    map[string]any{},
+				"serverInfo":      map[string]string{"name": "slow"},
+			})
+		case "tools/call":
+			// Sleep longer than the user's --timeout to force the deadline.
+			time.Sleep(500 * time.Millisecond)
+			resp.Result, _ = json.Marshal(toolCallResult{
+				Content: []contentBlock{{Type: "text", Text: "too late"}},
+			})
+		default:
+			resp.Error = &jsonrpcError{Code: -32601, Message: "method not found"}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	err := cmdCall([]string{srv.URL, "echo", "--params", `{}`, "--timeout", "50ms"})
+	if err == nil {
+		t.Fatal("expected timeout error when --timeout < server delay")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("expected annotated timeout error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "--timeout") {
+		t.Errorf("expected error to suggest --timeout, got: %v", err)
 	}
 }

@@ -43,6 +43,8 @@ func cmdCall(args []string) error {
 	stream := false
 	showHelp := false
 	maxOutput := defaultMaxOutput
+	var timeout time.Duration
+	timeoutSet := false
 	dynamicFlags := make(map[string]string)
 
 	// Parse remaining args: known flags first, then collect dynamic flags.
@@ -66,6 +68,20 @@ func cmdCall(args []string) error {
 				return fmt.Errorf("invalid --max-output value: %s", args[i])
 			}
 			maxOutput = n
+		case "--timeout":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--timeout requires a value (e.g. 30s, 5m, or 0 for none)")
+			}
+			i++
+			d, err := time.ParseDuration(args[i])
+			if err != nil {
+				return fmt.Errorf("invalid --timeout value %q: %w", args[i], err)
+			}
+			if d < 0 {
+				return fmt.Errorf("--timeout must be >= 0")
+			}
+			timeout = d
+			timeoutSet = true
 		case "--help", "-h":
 			showHelp = true
 		default:
@@ -155,6 +171,11 @@ func cmdCall(args []string) error {
 		return err
 	}
 	defer func() { _ = transport.Close() }()
+
+	// Apply user-specified timeout to the tool call (initialize used defaults).
+	if timeoutSet {
+		transport.SetTimeout(timeout)
+	}
 
 	// Call tool
 	output, err := executeToolCall(transport, toolName, params, stream)

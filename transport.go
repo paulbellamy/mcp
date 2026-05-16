@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -42,6 +43,28 @@ type Transport interface {
 	Notify(notif jsonrpcNotification) error
 	// Close shuts down the transport.
 	Close() error
+	// SetTimeout sets the per-call timeout for subsequent Send and
+	// SendStreaming requests. A value of 0 means no timeout.
+	SetTimeout(d time.Duration)
+}
+
+// Default per-call timeouts. Send is used for short request/response work
+// (initialize, tool calls that return promptly). Streaming may legitimately
+// hold the connection open for progress events, so its default is longer.
+const (
+	defaultHTTPSendTimeout   = 2 * time.Minute
+	defaultHTTPStreamTimeout = 5 * time.Minute
+	defaultStdioCallTimeout  = 60 * time.Second
+	defaultDaemonCallTimeout = 120 * time.Second
+)
+
+// contextWithOptionalTimeout returns a context with the given timeout, or a
+// plain cancellable context if d <= 0 (meaning no timeout).
+func contextWithOptionalTimeout(d time.Duration) (context.Context, context.CancelFunc) {
+	if d <= 0 {
+		return context.WithCancel(context.Background())
+	}
+	return context.WithTimeout(context.Background(), d)
 }
 
 // stdioResult is the result delivered from the reader goroutine to a waiting Send call.
@@ -53,12 +76,13 @@ type stdioResult struct {
 // StdioTransport communicates with an MCP server via stdin/stdout of a child process.
 // A single persistent reader goroutine dispatches responses to waiting callers by request ID.
 type StdioTransport struct {
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	reader  *bufio.Reader
-	mu      sync.Mutex // protects stdin writes, pending map, and closed flag
-	pending map[string]chan stdioResult
-	closed  bool
+	cmd         *exec.Cmd
+	stdin       io.WriteCloser
+	reader      *bufio.Reader
+	mu          sync.Mutex // protects stdin writes, pending map, and closed flag
+	pending     map[string]chan stdioResult
+	closed      bool
+	callTimeout time.Duration // 0 = no timeout
 }
 
 func NewStdioTransport(command string, args []string) (*StdioTransport, error) {
@@ -80,10 +104,11 @@ func NewStdioTransport(command string, args []string) (*StdioTransport, error) {
 	}
 
 	t := &StdioTransport{
-		cmd:     cmd,
-		stdin:   stdin,
-		reader:  bufio.NewReader(stdout),
-		pending: make(map[string]chan stdioResult),
+		cmd:         cmd,
+		stdin:       stdin,
+		reader:      bufio.NewReader(stdout),
+		pending:     make(map[string]chan stdioResult),
+		callTimeout: defaultStdioCallTimeout,
 	}
 
 	go t.readLoop()
@@ -162,9 +187,18 @@ func (t *StdioTransport) Send(req jsonrpcRequest) (jsonrpcResponse, error) {
 		t.mu.Unlock()
 		return jsonrpcResponse{}, fmt.Errorf("write to stdin: %w", err)
 	}
+	// Snapshot timeout under the lock so a concurrent SetTimeout can't race.
+	callTimeout := t.callTimeout
 	t.mu.Unlock()
 
-	timer := time.NewTimer(60 * time.Second)
+	// With no timeout, block on the channel. Close() drains pending via
+	// readLoop's error fanout, so this always unblocks eventually.
+	if callTimeout <= 0 {
+		r := <-ch
+		return r.resp, r.err
+	}
+
+	timer := time.NewTimer(callTimeout)
 	defer timer.Stop()
 	select {
 	case r := <-ch:
@@ -173,8 +207,16 @@ func (t *StdioTransport) Send(req jsonrpcRequest) (jsonrpcResponse, error) {
 		t.mu.Lock()
 		delete(t.pending, key)
 		t.mu.Unlock()
-		return jsonrpcResponse{}, fmt.Errorf("stdio read timed out after 60s")
+		return jsonrpcResponse{}, fmt.Errorf("stdio read timed out after %s", callTimeout)
 	}
+}
+
+// SetTimeout updates the per-call timeout for subsequent Send calls.
+// A value of 0 means no timeout.
+func (t *StdioTransport) SetTimeout(d time.Duration) {
+	t.mu.Lock()
+	t.callTimeout = d
+	t.mu.Unlock()
 }
 
 func (t *StdioTransport) SendStreaming(req jsonrpcRequest, onEvent func(streamEvent)) (jsonrpcResponse, error) {
@@ -215,25 +257,47 @@ type HTTPTransport struct {
 	authToken string
 	client    *http.Client
 	sessionID string
+
+	// mu guards the timeout fields below. SetTimeout may be called from a
+	// different goroutine than Send/SendStreaming.
+	mu             sync.Mutex
+	requestTimeout time.Duration // for Send; 0 = no timeout
+	streamTimeout  time.Duration // for SendStreaming; 0 = no timeout
 }
 
 func NewHTTPTransport(url string, authToken string) *HTTPTransport {
 	return &HTTPTransport{
-		url:       url,
-		authToken: authToken,
-		client:    &http.Client{Timeout: 10 * time.Minute}, // Safety-net fallback; per-request contexts are primary
+		url:            url,
+		authToken:      authToken,
+		client:         &http.Client{}, // per-request contexts drive timeouts
+		requestTimeout: defaultHTTPSendTimeout,
+		streamTimeout:  defaultHTTPStreamTimeout,
 	}
 }
 
+// SetTimeout updates the per-call timeout used for both Send and SendStreaming.
+// A value of 0 means no timeout.
+func (t *HTTPTransport) SetTimeout(d time.Duration) {
+	t.mu.Lock()
+	t.requestTimeout = d
+	t.streamTimeout = d
+	t.mu.Unlock()
+}
+
 func (t *HTTPTransport) Send(req jsonrpcRequest) (jsonrpcResponse, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	t.mu.Lock()
+	timeout := t.requestTimeout
+	t.mu.Unlock()
+	ctx, cancel := contextWithOptionalTimeout(timeout)
 	defer cancel()
 	return t.sendWithContext(ctx, req, nil)
 }
 
 func (t *HTTPTransport) SendStreaming(req jsonrpcRequest, onEvent func(streamEvent)) (jsonrpcResponse, error) {
-	// Cap streaming duration to prevent a stalled server from holding the connection indefinitely
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	t.mu.Lock()
+	timeout := t.streamTimeout
+	t.mu.Unlock()
+	ctx, cancel := contextWithOptionalTimeout(timeout)
 	defer cancel()
 	return t.sendWithContext(ctx, req, onEvent)
 }
@@ -260,7 +324,7 @@ func (t *HTTPTransport) sendWithContext(ctx context.Context, req jsonrpcRequest,
 
 	httpResp, err := t.client.Do(httpReq)
 	if err != nil {
-		return jsonrpcResponse{}, fmt.Errorf("http request: %w", err)
+		return jsonrpcResponse{}, annotateTimeout(ctx, fmt.Errorf("http request: %w", err))
 	}
 	defer func() { _ = httpResp.Body.Close() }()
 
@@ -278,13 +342,13 @@ func (t *HTTPTransport) sendWithContext(ctx context.Context, req jsonrpcRequest,
 
 	if strings.HasPrefix(contentType, "text/event-stream") {
 		reqIDRaw, _ := json.Marshal(req.ID)
-		return t.readSSE(httpResp.Body, reqIDRaw, onEvent)
+		return t.readSSE(ctx, httpResp.Body, reqIDRaw, onEvent)
 	}
 
 	// Plain JSON response
 	body, err := readResponseBody(httpResp.Body)
 	if err != nil {
-		return jsonrpcResponse{}, fmt.Errorf("read response body: %w", err)
+		return jsonrpcResponse{}, annotateTimeout(ctx, fmt.Errorf("read response body: %w", err))
 	}
 
 	var resp jsonrpcResponse
@@ -295,7 +359,19 @@ func (t *HTTPTransport) sendWithContext(ctx context.Context, req jsonrpcRequest,
 	return resp, nil
 }
 
-func (t *HTTPTransport) readSSE(body io.Reader, reqIDRaw json.RawMessage, onEvent func(streamEvent)) (jsonrpcResponse, error) {
+// annotateTimeout rewrites context-deadline errors into a clearer message
+// pointing the user at --timeout. Other errors pass through unchanged.
+func annotateTimeout(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return err
+	}
+	return fmt.Errorf("tool call timed out: server did not respond. Pass --timeout <duration> (e.g. --timeout 5m) to wait longer, or --timeout 0 to wait indefinitely")
+}
+
+func (t *HTTPTransport) readSSE(ctx context.Context, body io.Reader, reqIDRaw json.RawMessage, onEvent func(streamEvent)) (jsonrpcResponse, error) {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	var result jsonrpcResponse
@@ -357,10 +433,15 @@ func (t *HTTPTransport) readSSE(body io.Reader, reqIDRaw json.RawMessage, onEven
 	}
 
 	if err := scanner.Err(); err != nil {
-		return jsonrpcResponse{}, fmt.Errorf("read SSE stream: %w", err)
+		return jsonrpcResponse{}, annotateTimeout(ctx, fmt.Errorf("read SSE stream: %w", err))
 	}
 
 	if !found {
+		// Server closed the stream without ever sending our response. If the
+		// context deadline fired, prefer that explanation.
+		if ctxErr := ctx.Err(); errors.Is(ctxErr, context.DeadlineExceeded) {
+			return jsonrpcResponse{}, annotateTimeout(ctx, ctxErr)
+		}
 		return jsonrpcResponse{}, fmt.Errorf("no response found in SSE stream for request ID %s", string(reqIDRaw))
 	}
 
@@ -426,9 +507,10 @@ func (t *HTTPTransport) Close() error {
 // DaemonTransport connects to a daemon-managed server via Unix socket.
 // The daemon keeps the server warm and already initialized.
 type DaemonTransport struct {
-	conn   net.Conn
-	reader *bufio.Reader
-	mu     sync.Mutex
+	conn        net.Conn
+	reader      *bufio.Reader
+	mu          sync.Mutex
+	callTimeout time.Duration // 0 = no read timeout
 }
 
 func NewDaemonTransport(serverName string) (*DaemonTransport, error) {
@@ -438,9 +520,17 @@ func NewDaemonTransport(serverName string) (*DaemonTransport, error) {
 		return nil, err
 	}
 	return &DaemonTransport{
-		conn:   conn,
-		reader: bufio.NewReader(conn),
+		conn:        conn,
+		reader:      bufio.NewReader(conn),
+		callTimeout: defaultDaemonCallTimeout,
 	}, nil
+}
+
+// SetTimeout updates the per-call read timeout. 0 means no timeout.
+func (t *DaemonTransport) SetTimeout(d time.Duration) {
+	t.mu.Lock()
+	t.callTimeout = d
+	t.mu.Unlock()
 }
 
 func (t *DaemonTransport) Send(req jsonrpcRequest) (jsonrpcResponse, error) {
@@ -457,7 +547,11 @@ func (t *DaemonTransport) Send(req jsonrpcRequest) (jsonrpcResponse, error) {
 		return jsonrpcResponse{}, fmt.Errorf("write: %w", err)
 	}
 
-	_ = t.conn.SetReadDeadline(time.Now().Add(120 * time.Second))
+	if t.callTimeout > 0 {
+		_ = t.conn.SetReadDeadline(time.Now().Add(t.callTimeout))
+	} else {
+		_ = t.conn.SetReadDeadline(time.Time{})
+	}
 	for {
 		line, err := t.reader.ReadBytes('\n')
 		if err != nil {
