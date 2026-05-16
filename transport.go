@@ -187,15 +187,18 @@ func (t *StdioTransport) Send(req jsonrpcRequest) (jsonrpcResponse, error) {
 		t.mu.Unlock()
 		return jsonrpcResponse{}, fmt.Errorf("write to stdin: %w", err)
 	}
+	// Snapshot timeout under the lock so a concurrent SetTimeout can't race.
+	callTimeout := t.callTimeout
 	t.mu.Unlock()
 
-	if t.callTimeout <= 0 {
-		// No timeout — wait indefinitely.
+	// With no timeout, block on the channel. Close() drains pending via
+	// readLoop's error fanout, so this always unblocks eventually.
+	if callTimeout <= 0 {
 		r := <-ch
 		return r.resp, r.err
 	}
 
-	timer := time.NewTimer(t.callTimeout)
+	timer := time.NewTimer(callTimeout)
 	defer timer.Stop()
 	select {
 	case r := <-ch:
@@ -204,7 +207,7 @@ func (t *StdioTransport) Send(req jsonrpcRequest) (jsonrpcResponse, error) {
 		t.mu.Lock()
 		delete(t.pending, key)
 		t.mu.Unlock()
-		return jsonrpcResponse{}, fmt.Errorf("stdio read timed out after %s", t.callTimeout)
+		return jsonrpcResponse{}, fmt.Errorf("stdio read timed out after %s", callTimeout)
 	}
 }
 
@@ -250,10 +253,14 @@ func (t *StdioTransport) Close() error {
 
 // HTTPTransport communicates with an MCP server via streamable HTTP.
 type HTTPTransport struct {
-	url            string
-	authToken      string
-	client         *http.Client
-	sessionID      string
+	url       string
+	authToken string
+	client    *http.Client
+	sessionID string
+
+	// mu guards the timeout fields below. SetTimeout may be called from a
+	// different goroutine than Send/SendStreaming.
+	mu             sync.Mutex
 	requestTimeout time.Duration // for Send; 0 = no timeout
 	streamTimeout  time.Duration // for SendStreaming; 0 = no timeout
 }
@@ -271,18 +278,26 @@ func NewHTTPTransport(url string, authToken string) *HTTPTransport {
 // SetTimeout updates the per-call timeout used for both Send and SendStreaming.
 // A value of 0 means no timeout.
 func (t *HTTPTransport) SetTimeout(d time.Duration) {
+	t.mu.Lock()
 	t.requestTimeout = d
 	t.streamTimeout = d
+	t.mu.Unlock()
 }
 
 func (t *HTTPTransport) Send(req jsonrpcRequest) (jsonrpcResponse, error) {
-	ctx, cancel := contextWithOptionalTimeout(t.requestTimeout)
+	t.mu.Lock()
+	timeout := t.requestTimeout
+	t.mu.Unlock()
+	ctx, cancel := contextWithOptionalTimeout(timeout)
 	defer cancel()
 	return t.sendWithContext(ctx, req, nil)
 }
 
 func (t *HTTPTransport) SendStreaming(req jsonrpcRequest, onEvent func(streamEvent)) (jsonrpcResponse, error) {
-	ctx, cancel := contextWithOptionalTimeout(t.streamTimeout)
+	t.mu.Lock()
+	timeout := t.streamTimeout
+	t.mu.Unlock()
+	ctx, cancel := contextWithOptionalTimeout(timeout)
 	defer cancel()
 	return t.sendWithContext(ctx, req, onEvent)
 }
