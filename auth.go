@@ -77,7 +77,7 @@ func cmdAuth(args []string) error {
 	cleanupExpiredPendingAuth()
 
 	if len(args) < 1 {
-		return fmt.Errorf("usage: mcp auth <name> [--callback-url <url>]")
+		return fmt.Errorf("usage: mcp auth <name> [--callback-url <url>] [--start-url <url>]")
 	}
 
 	name := args[0]
@@ -86,6 +86,7 @@ func cmdAuth(args []string) error {
 	}
 
 	var callbackURL string
+	var startURL string
 
 	// Parse flags
 	for i := 1; i < len(args); i++ {
@@ -96,6 +97,12 @@ func cmdAuth(args []string) error {
 			}
 			i++
 			callbackURL = args[i]
+		case "--start-url":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--start-url requires a value")
+			}
+			i++
+			startURL = args[i]
 		default:
 			return fmt.Errorf("unknown flag: %s", args[i])
 		}
@@ -109,6 +116,9 @@ func cmdAuth(args []string) error {
 	// Env var fallback for flags
 	if callbackURL == "" {
 		callbackURL = os.Getenv("MCP_CALLBACK_URL")
+	}
+	if startURL == "" {
+		startURL = os.Getenv("MCP_AUTH_START_URL")
 	}
 
 	// Manual token mode
@@ -148,11 +158,18 @@ func cmdAuth(args []string) error {
 
 	var redirectURI string
 	var localListener net.Listener
+	var relayTimestamp int64
 	if callbackURL != "" {
 		if err := validateEndpointURL(callbackURL, "callback URL"); err != nil {
 			return err
 		}
-		redirectURI = buildRelayRedirectURI(callbackURL, nonce)
+		if startURL != "" {
+			if err := validateEndpointURL(startURL, "start URL"); err != nil {
+				return err
+			}
+		}
+		relayTimestamp = time.Now().Unix()
+		redirectURI = buildRelayRedirectURIAt(callbackURL, nonce, relayTimestamp)
 	} else {
 		// Start listener now so we know the real port for registration
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -211,6 +228,9 @@ func cmdAuth(args []string) error {
 		}
 
 		authURL := buildAuthorizationURL(authMeta, regClientID, redirectURI, codeChallenge, nonce, resource)
+		if startURL != "" {
+			authURL = buildStartHandoffURL(startURL, nonce, relayTimestamp, authURL)
+		}
 
 		// Auth URL is returned via JSON stdout; don't duplicate to stderr
 		// where it could be captured in logs along with the nonce/state.
@@ -559,11 +579,40 @@ func refreshOAuthToken(tokens *AuthTokens) (*AuthTokens, error) {
 // buildRelayRedirectURI constructs the relay OAuth callback URL.
 // Appends nonce and timestamp as query parameters to the user's callback URL.
 func buildRelayRedirectURI(callbackURL, nonce string) string {
-	t := time.Now().Unix()
+	return buildRelayRedirectURIAt(callbackURL, nonce, time.Now().Unix())
+}
+
+// buildRelayRedirectURIAt is like buildRelayRedirectURI but uses the caller's
+// timestamp so the same value can be cross-embedded in other URLs (e.g. the
+// gateway start-handoff URL).
+func buildRelayRedirectURIAt(callbackURL, nonce string, t int64) string {
 	u, _ := url.Parse(callbackURL) // guaranteed valid by validateEndpointURL
 	q := u.Query()
 	q.Set("nonce", nonce)
 	q.Set("t", fmt.Sprintf("%d", t))
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// buildStartHandoffURL wraps an upstream OAuth authorization URL in a
+// gateway-controlled /start redirect. The browser hits the gateway first,
+// which can set an HttpOnly cookie binding the click to (nonce, agentId)
+// before 302'ing to the upstream. This defeats URL-leak replay attacks
+// where an attacker reads the printed auth URL and authorizes in their
+// own browser to bind their upstream tokens to the victim's agent.
+//
+// The CLI knows nothing about the start URL's structure beyond:
+//   - it's an HTTPS endpoint chosen by the gateway,
+//   - it accepts nonce, t, and destination query parameters.
+//
+// Any gateway that follows the same handoff convention can opt in by
+// setting MCP_AUTH_START_URL.
+func buildStartHandoffURL(startURL, nonce string, t int64, upstreamURL string) string {
+	u, _ := url.Parse(startURL) // guaranteed valid by validateEndpointURL
+	q := u.Query()
+	q.Set("nonce", nonce)
+	q.Set("t", fmt.Sprintf("%d", t))
+	q.Set("destination", upstreamURL)
 	u.RawQuery = q.Encode()
 	return u.String()
 }

@@ -304,6 +304,283 @@ func TestBuildRelayRedirectURI_IncludesNonceAndTimestamp(t *testing.T) {
 	}
 }
 
+func TestBuildStartHandoffURL_RoundTrip(t *testing.T) {
+	upstream := "https://auth.example.com/authorize?client_id=cid&redirect_uri=https%3A%2F%2Fgw.example.com%2Fapi%2Foauth%2Frelay%2Fagent-1%2Fcallback%3Fnonce%3Dn-abc%26t%3D1700000000&state=n-abc&code_challenge=cc"
+
+	wrapped := buildStartHandoffURL(
+		"https://gw.example.com/api/oauth/relay/agent-1/start",
+		"n-abc", 1700000000, upstream,
+	)
+
+	parsed, err := url.Parse(wrapped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Host != "gw.example.com" {
+		t.Errorf("expected host gw.example.com, got %q", parsed.Host)
+	}
+	if parsed.Path != "/api/oauth/relay/agent-1/start" {
+		t.Errorf("expected /api/oauth/relay/agent-1/start path, got %q", parsed.Path)
+	}
+
+	q := parsed.Query()
+	if q.Get("nonce") != "n-abc" {
+		t.Errorf("expected nonce=n-abc, got %q", q.Get("nonce"))
+	}
+	if q.Get("t") != "1700000000" {
+		t.Errorf("expected t=1700000000, got %q", q.Get("t"))
+	}
+	if q.Get("destination") != upstream {
+		t.Errorf("destination did not round-trip\n got: %s\nwant: %s", q.Get("destination"), upstream)
+	}
+}
+
+func TestBuildStartHandoffURL_PreservesExistingQuery(t *testing.T) {
+	wrapped := buildStartHandoffURL(
+		"https://gw.example.com/start?tenant=acme",
+		"n-1", 1700000000, "https://auth.example.com/authorize?x=1",
+	)
+
+	parsed, err := url.Parse(wrapped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := parsed.Query()
+	if q.Get("tenant") != "acme" {
+		t.Errorf("pre-existing query param dropped, got tenant=%q", q.Get("tenant"))
+	}
+	if q.Get("nonce") != "n-1" || q.Get("t") != "1700000000" || q.Get("destination") == "" {
+		t.Errorf("handoff params missing: %v", q)
+	}
+}
+
+func TestBuildRelayRedirectURIAt_UsesProvidedTimestamp(t *testing.T) {
+	uri := buildRelayRedirectURIAt("https://example.com/callback", "n", 1234567890)
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Query().Get("t") != "1234567890" {
+		t.Errorf("expected t=1234567890, got %q", parsed.Query().Get("t"))
+	}
+	if parsed.Query().Get("nonce") != "n" {
+		t.Errorf("expected nonce=n, got %q", parsed.Query().Get("nonce"))
+	}
+}
+
+// setupRelayAuthTestServer stands up a mock OAuth discovery + registration
+// stack on localhost so cmdAuth in relay mode can run to the auth-URL step.
+// Returns the resource-server URL to use as the MCP server URL.
+func setupRelayAuthTestServer(t *testing.T) string {
+	t.Helper()
+
+	var authSrv *httptest.Server
+	authSrv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/oauth-authorization-server" {
+			_ = json.NewEncoder(w).Encode(authServerMetadata{
+				Issuer:                        authSrv.URL,
+				AuthorizationEndpoint:         authSrv.URL + "/authorize",
+				TokenEndpoint:                 authSrv.URL + "/token",
+				CodeChallengeMethodsSupported: []string{"S256"},
+			})
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	t.Cleanup(authSrv.Close)
+
+	var resourceSrv *httptest.Server
+	resourceSrv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/oauth-protected-resource" {
+			_ = json.NewEncoder(w).Encode(protectedResourceMetadata{
+				AuthorizationServers: []string{authSrv.URL},
+				Resource:             resourceSrv.URL,
+			})
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	t.Cleanup(resourceSrv.Close)
+
+	return resourceSrv.URL
+}
+
+func runCmdAuthRelay(t *testing.T, args []string, env map[string]string) authOutput {
+	t.Helper()
+
+	for k, v := range env {
+		t.Setenv(k, v)
+	}
+
+	var out authOutput
+	stdout := captureStdout(t, func() {
+		if err := cmdAuth(args); err != nil {
+			t.Fatalf("cmdAuth: %v", err)
+		}
+	})
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("parse cmdAuth JSON: %v\nraw: %s", err, stdout)
+	}
+	return out
+}
+
+func TestCmdAuth_RelayMode_NoStartURL_EmitsRawUpstream(t *testing.T) {
+	setupTestConfigDir(t)
+	resourceURL := setupRelayAuthTestServer(t)
+
+	if err := addServerConfig(ServerConfig{
+		Name:      "test",
+		Transport: "streamable-http",
+		URL:       resourceURL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := runCmdAuthRelay(t,
+		[]string{"test", "--callback-url", "http://localhost:9999/cb"},
+		map[string]string{"MCP_CLIENT_ID": "cid", "MCP_CLIENT_SECRET": "secret"},
+	)
+
+	parsed, err := url.Parse(out.AuthURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(parsed.Path, "/authorize") {
+		t.Errorf("expected upstream /authorize URL, got %q", out.AuthURL)
+	}
+	if parsed.Query().Get("state") != out.Nonce {
+		t.Errorf("expected state=%q, got %q", out.Nonce, parsed.Query().Get("state"))
+	}
+	redirectURI := parsed.Query().Get("redirect_uri")
+	if redirectURI == "" {
+		t.Fatal("missing redirect_uri")
+	}
+	if !strings.HasPrefix(redirectURI, "http://localhost:9999/cb?") {
+		t.Errorf("unexpected redirect_uri prefix: %s", redirectURI)
+	}
+}
+
+func TestCmdAuth_RelayMode_WithStartURL_WrapsURL(t *testing.T) {
+	setupTestConfigDir(t)
+	resourceURL := setupRelayAuthTestServer(t)
+
+	if err := addServerConfig(ServerConfig{
+		Name:      "test",
+		Transport: "streamable-http",
+		URL:       resourceURL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := runCmdAuthRelay(t,
+		[]string{
+			"test",
+			"--callback-url", "http://localhost:9999/cb",
+			"--start-url", "http://localhost:9999/start",
+		},
+		map[string]string{"MCP_CLIENT_ID": "cid", "MCP_CLIENT_SECRET": "secret"},
+	)
+
+	parsed, err := url.Parse(out.AuthURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Path != "/start" {
+		t.Errorf("expected /start path, got %q", parsed.Path)
+	}
+
+	q := parsed.Query()
+	if q.Get("nonce") != out.Nonce {
+		t.Errorf("expected outer nonce=%q, got %q", out.Nonce, q.Get("nonce"))
+	}
+	outerT := q.Get("t")
+	if outerT == "" {
+		t.Fatal("missing outer t")
+	}
+	dest := q.Get("destination")
+	if dest == "" {
+		t.Fatal("missing destination")
+	}
+
+	destParsed, err := url.Parse(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(destParsed.Path, "/authorize") {
+		t.Errorf("expected destination to be upstream /authorize, got %q", dest)
+	}
+	if destParsed.Query().Get("state") != out.Nonce {
+		t.Errorf("destination state != outer nonce: %q vs %q", destParsed.Query().Get("state"), out.Nonce)
+	}
+
+	rURI := destParsed.Query().Get("redirect_uri")
+	rParsed, err := url.Parse(rURI)
+	if err != nil {
+		t.Fatalf("parse redirect_uri: %v", err)
+	}
+	if rParsed.Query().Get("nonce") != out.Nonce {
+		t.Errorf("redirect_uri nonce != outer nonce")
+	}
+	if rParsed.Query().Get("t") != outerT {
+		t.Errorf("redirect_uri t (%q) != outer t (%q)", rParsed.Query().Get("t"), outerT)
+	}
+}
+
+func TestCmdAuth_RelayMode_StartURLEnvVarFallback(t *testing.T) {
+	setupTestConfigDir(t)
+	resourceURL := setupRelayAuthTestServer(t)
+
+	if err := addServerConfig(ServerConfig{
+		Name:      "test",
+		Transport: "streamable-http",
+		URL:       resourceURL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := runCmdAuthRelay(t,
+		[]string{"test", "--callback-url", "http://localhost:9999/cb"},
+		map[string]string{
+			"MCP_CLIENT_ID":      "cid",
+			"MCP_CLIENT_SECRET":  "secret",
+			"MCP_AUTH_START_URL": "http://localhost:9999/start",
+		},
+	)
+
+	parsed, err := url.Parse(out.AuthURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Path != "/start" {
+		t.Errorf("expected env-var start URL to wrap auth URL, got %q", out.AuthURL)
+	}
+}
+
+func TestCmdAuth_RelayMode_InvalidStartURL(t *testing.T) {
+	setupTestConfigDir(t)
+	resourceURL := setupRelayAuthTestServer(t)
+
+	if err := addServerConfig(ServerConfig{
+		Name:      "test",
+		Transport: "streamable-http",
+		URL:       resourceURL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := cmdAuth([]string{
+		"test",
+		"--callback-url", "http://localhost:9999/cb",
+		"--start-url", "http://evil.example.com/start",
+	})
+	if err == nil {
+		t.Fatal("expected error for non-HTTPS public start URL")
+	}
+	if !strings.Contains(err.Error(), "start URL") {
+		t.Errorf("expected error to mention 'start URL', got: %v", err)
+	}
+}
+
 func TestGetAuthToken_ExpiredNoRefresh(t *testing.T) {
 	setupTestConfigDir(t)
 
