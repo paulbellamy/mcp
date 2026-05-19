@@ -15,7 +15,10 @@ import (
 	"time"
 )
 
-var authHTTPClient = &http.Client{Timeout: 10 * time.Second}
+var authHTTPClient = &http.Client{
+	Timeout:       10 * time.Second,
+	CheckRedirect: checkSafeRedirect,
+}
 
 func validateEndpointURL(endpoint, label string) error {
 	u, err := url.Parse(endpoint)
@@ -29,6 +32,16 @@ func validateEndpointURL(endpoint, label string) error {
 		return nil
 	}
 	return fmt.Errorf("%s requires HTTPS (got %s)", label, endpoint)
+}
+
+// checkSafeRedirect re-validates the URL of each redirect hop so that a
+// server cannot redirect a request originally aimed at a validated
+// endpoint to an arbitrary internal address (SSRF).
+func checkSafeRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return fmt.Errorf("stopped after 10 redirects")
+	}
+	return validateEndpointURL(req.URL.String(), "redirect target")
 }
 
 // OAuth discovery and authorization types

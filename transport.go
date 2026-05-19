@@ -267,9 +267,11 @@ type HTTPTransport struct {
 
 func NewHTTPTransport(url string, authToken string) *HTTPTransport {
 	return &HTTPTransport{
-		url:            url,
-		authToken:      authToken,
-		client:         &http.Client{}, // per-request contexts drive timeouts
+		url:       url,
+		authToken: authToken,
+		// per-request contexts drive timeouts; CheckRedirect blocks SSRF
+		// to unvalidated hosts via server-side redirects.
+		client:         &http.Client{CheckRedirect: checkSafeRedirect},
 		requestTimeout: defaultHTTPSendTimeout,
 		streamTimeout:  defaultHTTPStreamTimeout,
 	}
@@ -388,6 +390,12 @@ func (t *HTTPTransport) readSSE(ctx context.Context, body io.Reader, reqIDRaw js
 				dataBuf.WriteByte('\n')
 			}
 			dataBuf.WriteString(strings.TrimPrefix(line, "data: "))
+			// Cap accumulated data across consecutive `data:` lines so a
+			// malicious server can't grow the buffer without ever emitting
+			// the blank-line event boundary that would dispatch it.
+			if dataBuf.Len() > maxResponseBody {
+				return jsonrpcResponse{}, fmt.Errorf("SSE event exceeds %d bytes", maxResponseBody)
+			}
 			continue
 		}
 
