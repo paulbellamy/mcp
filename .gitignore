@@ -15,3 +15,6 @@ mcp
 # Go workspace
 go.work
 go.work.sum
+
+# deepsec security scanner workspace (local tooling only)
+.deepsec/
