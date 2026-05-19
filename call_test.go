@@ -256,7 +256,9 @@ func TestSanitizePathComponent(t *testing.T) {
 
 func TestSaveFullOutput(t *testing.T) {
 	tmp := t.TempDir()
-	t.Setenv("TMPDIR", tmp)
+	prev := testConfigDir
+	testConfigDir = tmp
+	t.Cleanup(func() { testConfigDir = prev })
 
 	path := saveFullOutput("my/server", "my-tool", "hello world")
 	if path == "" {
