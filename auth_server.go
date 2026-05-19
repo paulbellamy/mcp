@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"html"
 	"net"
@@ -109,7 +110,7 @@ func oauthCallbackHandler(nonce string, codeCh chan<- string, errCh chan<- error
 			return
 		}
 
-		if state != nonce {
+		if subtle.ConstantTimeCompare([]byte(state), []byte(nonce)) != 1 {
 			w.Header().Set("Content-Type", "text/html")
 			_, _ = fmt.Fprint(w, "<html><body><h2>Error</h2><p>Invalid state parameter.</p></body></html>")
 			errCh <- fmt.Errorf("state mismatch")

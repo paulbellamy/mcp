@@ -212,15 +212,34 @@ func sanitizePathComponent(s string) string {
 	return unsafePathChars.ReplaceAllString(s, "_")
 }
 
-// saveFullOutput writes the full output to a temp file and returns its path.
+// saveFullOutput writes the full output to a file under the user's config
+// directory and returns its path. The config dir is 0700 and inside the
+// user's home, so other local users can't pre-plant symlinks the way
+// they can in a shared /tmp. We also use O_EXCL + a random suffix so we
+// never follow an existing symlink at the target path.
 func saveFullOutput(serverName, toolName, content string) string {
-	dir := filepath.Join(os.TempDir(), "mcp-results")
+	dir := filepath.Join(configDir(), "results")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return ""
 	}
-	name := fmt.Sprintf("%d-%s-%s.txt", time.Now().Unix(), sanitizePathComponent(serverName), sanitizePathComponent(toolName))
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+	pattern := fmt.Sprintf("%d-%s-%s-*.txt", time.Now().Unix(), sanitizePathComponent(serverName), sanitizePathComponent(toolName))
+	f, err := os.CreateTemp(dir, pattern)
+	if err != nil {
+		return ""
+	}
+	path := f.Name()
+	if err := os.Chmod(path, 0600); err != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return ""
+	}
+	if _, err := f.Write([]byte(content)); err != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return ""
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(path)
 		return ""
 	}
 	return path
