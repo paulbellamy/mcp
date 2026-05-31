@@ -52,12 +52,31 @@ type protectedResourceMetadata struct {
 }
 
 type authServerMetadata struct {
-	Issuer                string   `json:"issuer"`
-	AuthorizationEndpoint string   `json:"authorization_endpoint"`
-	TokenEndpoint         string   `json:"token_endpoint"`
-	RegistrationEndpoint  string   `json:"registration_endpoint,omitempty"`
-	ScopesSupported       []string `json:"scopes_supported,omitempty"`
-	CodeChallengeMethodsSupported []string `json:"code_challenge_methods_supported,omitempty"`
+	Issuer                            string   `json:"issuer"`
+	AuthorizationEndpoint             string   `json:"authorization_endpoint"`
+	TokenEndpoint                     string   `json:"token_endpoint"`
+	RegistrationEndpoint              string   `json:"registration_endpoint,omitempty"`
+	ScopesSupported                   []string `json:"scopes_supported,omitempty"`
+	CodeChallengeMethodsSupported     []string `json:"code_challenge_methods_supported,omitempty"`
+	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported,omitempty"`
+}
+
+// chooseTokenAuthMethod selects a token endpoint client-authentication method
+// the CLI supports from the server's advertised list. Per RFC 8414 an absent
+// list defaults to client_secret_basic. Preference order keeps already-working
+// servers on basic while supporting servers that reject it.
+func chooseTokenAuthMethod(supported []string) (string, error) {
+	if len(supported) == 0 {
+		return "client_secret_basic", nil
+	}
+	for _, pref := range []string{"client_secret_basic", "client_secret_post", "none"} {
+		for _, m := range supported {
+			if m == pref {
+				return pref, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no supported token endpoint auth method (server supports: %v)", supported)
 }
 
 type clientRegistrationRequest struct {
@@ -69,8 +88,9 @@ type clientRegistrationRequest struct {
 }
 
 type clientRegistrationResponse struct {
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret,omitempty"`
+	ClientID                string `json:"client_id"`
+	ClientSecret            string `json:"client_secret,omitempty"`
+	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method,omitempty"`
 }
 
 type tokenResponse struct {
@@ -164,6 +184,14 @@ func cmdAuth(args []string) error {
 		return fmt.Errorf("OAuth discovery failed: %w", err)
 	}
 
+	// Negotiate the token endpoint client-authentication method from what the
+	// server advertises. Hard-coding client_secret_basic breaks servers that
+	// only accept client_secret_post or none (public + PKCE).
+	authMethod, err := chooseTokenAuthMethod(authMeta.TokenEndpointAuthMethodsSupported)
+	if err != nil {
+		return err
+	}
+
 	// Step 2: Compute redirect URI and PKCE up front
 	nonce := generateNonce()
 	codeVerifier := generateCodeVerifier()
@@ -210,7 +238,7 @@ func cmdAuth(args []string) error {
 		}
 
 		logStderr("registering client dynamically...")
-		reg, err := registerClient(authMeta, redirectURI)
+		reg, err := registerClient(authMeta, redirectURI, authMethod)
 		if err != nil {
 			if localListener != nil {
 				_ = localListener.Close()
@@ -219,21 +247,27 @@ func cmdAuth(args []string) error {
 		}
 		regClientID = reg.ClientID
 		regClientSecret = reg.ClientSecret
+		// Per RFC 7591 §3.2.1 the server's response is authoritative and may
+		// assign a different auth method than requested; honor it if returned.
+		if reg.TokenEndpointAuthMethod != "" {
+			authMethod = reg.TokenEndpointAuthMethod
+		}
 	}
 
 	// Step 4: Build authorization URL
 	if callbackURL != "" {
 		// Relay mode: save pending state and exit
 		pending := &PendingAuth{
-			Nonce:        nonce,
-			CodeVerifier: codeVerifier,
-			ClientID:     regClientID,
-			ClientSecret: regClientSecret,
-			TokenURL:     authMeta.TokenEndpoint,
-			Resource:     resource,
-			RedirectURI:  redirectURI,
-			ServerName:   name,
-			CreatedAt:    time.Now().Unix(),
+			Nonce:                   nonce,
+			CodeVerifier:            codeVerifier,
+			ClientID:                regClientID,
+			ClientSecret:            regClientSecret,
+			TokenURL:                authMeta.TokenEndpoint,
+			Resource:                resource,
+			RedirectURI:             redirectURI,
+			ServerName:              name,
+			CreatedAt:               time.Now().Unix(),
+			TokenEndpointAuthMethod: authMethod,
 		}
 
 		if err := savePendingAuth(name, pending); err != nil {
@@ -256,7 +290,7 @@ func cmdAuth(args []string) error {
 	}
 
 	// Local mode: hand off the already-listening socket
-	return localOAuthFlow(localListener, name, authMeta, regClientID, regClientSecret, codeVerifier, codeChallenge, nonce, resource)
+	return localOAuthFlow(localListener, name, authMeta, regClientID, regClientSecret, codeVerifier, codeChallenge, nonce, resource, authMethod)
 }
 
 // cmdAuthCallback handles `mcp auth-callback --nonce <nonce> --code <code>`.
@@ -302,7 +336,7 @@ func cmdAuthCallback(args []string) error {
 	}
 
 	// Save tokens
-	auth := tokensFromResponse(tokens, pending.ClientID, pending.ClientSecret, pending.TokenURL, pending.Resource)
+	auth := tokensFromResponse(tokens, pending.ClientID, pending.ClientSecret, pending.TokenURL, pending.Resource, pending.TokenEndpointAuthMethod)
 
 	if err := saveAuth(pending.ServerName, auth); err != nil {
 		return fmt.Errorf("save auth: %w", err)
@@ -426,13 +460,13 @@ func fetchAuthServerMetadata(client *http.Client, authServerURL string) (*authSe
 }
 
 // registerClient performs RFC 7591 Dynamic Client Registration.
-func registerClient(meta *authServerMetadata, redirectURI string) (*clientRegistrationResponse, error) {
+func registerClient(meta *authServerMetadata, redirectURI, authMethod string) (*clientRegistrationResponse, error) {
 	reqBody := clientRegistrationRequest{
 		RedirectURIs:            []string{redirectURI},
 		ClientName:              "mcp-cli",
 		GrantTypes:              []string{"authorization_code", "refresh_token"},
 		ResponseTypes:           []string{"code"},
-		TokenEndpointAuthMethod: "client_secret_basic",
+		TokenEndpointAuthMethod: authMethod,
 	}
 
 	data, err := json.Marshal(reqBody)
@@ -490,15 +524,32 @@ func buildAuthorizationURL(meta *authServerMetadata, clientID, redirectURI, code
 	return meta.AuthorizationEndpoint + "?" + params.Encode()
 }
 
-// doTokenRequest sends a POST to a token endpoint with the given form params.
-func doTokenRequest(tokenURL string, params url.Values, clientID, clientSecret string) (*tokenResponse, error) {
+// doTokenRequest sends a POST to a token endpoint with the given form params,
+// authenticating the client per the negotiated token endpoint auth method.
+func doTokenRequest(tokenURL string, params url.Values, clientID, clientSecret, authMethod string) (*tokenResponse, error) {
+	// A "none" public client (PKCE only) sends no client secret. For
+	// client_secret_post the secret goes in the form body; otherwise
+	// (client_secret_basic, or empty for tokens saved before this field
+	// existed — the RFC 8414 default) it goes in the Authorization header.
+	useBasic := false
+	switch authMethod {
+	case "none":
+		// no client authentication
+	case "client_secret_post":
+		if clientSecret != "" {
+			params.Set("client_secret", clientSecret)
+		}
+	default:
+		useBasic = clientSecret != ""
+	}
+
 	req, err := http.NewRequest("POST", tokenURL, strings.NewReader(params.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	if clientSecret != "" {
+	if useBasic {
 		req.SetBasicAuth(clientID, clientSecret)
 	}
 
@@ -530,14 +581,15 @@ func doTokenRequest(tokenURL string, params url.Values, clientID, clientSecret s
 }
 
 // tokensFromResponse converts a tokenResponse into an AuthTokens struct.
-func tokensFromResponse(resp *tokenResponse, clientID, clientSecret, tokenURL, resource string) *AuthTokens {
+func tokensFromResponse(resp *tokenResponse, clientID, clientSecret, tokenURL, resource, authMethod string) *AuthTokens {
 	auth := &AuthTokens{
-		AccessToken:  resp.AccessToken,
-		RefreshToken: resp.RefreshToken,
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		TokenURL:     tokenURL,
-		Resource:     resource,
+		AccessToken:             resp.AccessToken,
+		RefreshToken:            resp.RefreshToken,
+		ClientID:                clientID,
+		ClientSecret:            clientSecret,
+		TokenURL:                tokenURL,
+		Resource:                resource,
+		TokenEndpointAuthMethod: authMethod,
 	}
 	if resp.ExpiresIn > 0 {
 		auth.ExpiresAt = time.Now().Unix() + resp.ExpiresIn
@@ -559,7 +611,7 @@ func exchangeCode(pending *PendingAuth, code string) (*tokenResponse, error) {
 		params.Set("resource", pending.Resource)
 	}
 
-	return doTokenRequest(pending.TokenURL, params, pending.ClientID, pending.ClientSecret)
+	return doTokenRequest(pending.TokenURL, params, pending.ClientID, pending.ClientSecret, pending.TokenEndpointAuthMethod)
 }
 
 // refreshOAuthToken refreshes an expired OAuth token.
@@ -574,12 +626,12 @@ func refreshOAuthToken(tokens *AuthTokens) (*AuthTokens, error) {
 		params.Set("resource", tokens.Resource)
 	}
 
-	tokenResp, err := doTokenRequest(tokens.TokenURL, params, tokens.ClientID, tokens.ClientSecret)
+	tokenResp, err := doTokenRequest(tokens.TokenURL, params, tokens.ClientID, tokens.ClientSecret, tokens.TokenEndpointAuthMethod)
 	if err != nil {
 		return nil, err
 	}
 
-	refreshed := tokensFromResponse(tokenResp, tokens.ClientID, tokens.ClientSecret, tokens.TokenURL, tokens.Resource)
+	refreshed := tokensFromResponse(tokenResp, tokens.ClientID, tokens.ClientSecret, tokens.TokenURL, tokens.Resource, tokens.TokenEndpointAuthMethod)
 
 	// Keep old refresh token if new one not provided
 	if refreshed.RefreshToken == "" {

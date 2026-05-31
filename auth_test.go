@@ -181,7 +181,7 @@ func TestRegisterClient(t *testing.T) {
 		RegistrationEndpoint: srv.URL,
 	}
 
-	reg, err := registerClient(meta, "http://localhost:8080/callback")
+	reg, err := registerClient(meta, "http://localhost:8080/callback", "client_secret_basic")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,6 +230,110 @@ func TestRefreshOAuthToken(t *testing.T) {
 	}
 	if refreshed.ExpiresAt == 0 {
 		t.Error("expected non-zero ExpiresAt")
+	}
+}
+
+func TestRefreshOAuthToken_ClientSecretPost(t *testing.T) {
+	var gotBasic, gotBodySecret bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _, gotBasic = r.BasicAuth()
+		_ = r.ParseForm()
+		gotBodySecret = r.Form.Get("client_secret") == "sec"
+		_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "new-at", RefreshToken: "new-rt"})
+	}))
+	defer srv.Close()
+
+	tokens := &AuthTokens{
+		RefreshToken:            "old-rt",
+		ClientID:                "cid",
+		ClientSecret:            "sec",
+		TokenURL:                srv.URL,
+		TokenEndpointAuthMethod: "client_secret_post",
+	}
+
+	refreshed, err := refreshOAuthToken(tokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotBasic {
+		t.Error("client_secret_post must not use Basic auth")
+	}
+	if !gotBodySecret {
+		t.Error("client_secret_post must send client_secret in the form body")
+	}
+	if refreshed.TokenEndpointAuthMethod != "client_secret_post" {
+		t.Errorf("refreshed token dropped auth method: got %q", refreshed.TokenEndpointAuthMethod)
+	}
+}
+
+func TestChooseTokenAuthMethod(t *testing.T) {
+	tests := []struct {
+		name      string
+		supported []string
+		want      string
+		wantErr   bool
+	}{
+		{"absent defaults to basic (RFC 8414)", nil, "client_secret_basic", false},
+		{"notion: all three prefers basic", []string{"client_secret_basic", "client_secret_post", "none"}, "client_secret_basic", false},
+		{"context7: post only", []string{"client_secret_post"}, "client_secret_post", false},
+		{"sprites: none and post prefers post", []string{"none", "client_secret_post"}, "client_secret_post", false},
+		{"none only", []string{"none"}, "none", false},
+		{"unsupported method", []string{"private_key_jwt", "tls_client_auth"}, "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := chooseTokenAuthMethod(tt.supported)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDoTokenRequest_AuthMethods(t *testing.T) {
+	tests := []struct {
+		name           string
+		authMethod     string
+		clientSecret   string
+		wantBasic      bool
+		wantBodySecret bool
+	}{
+		{"basic uses Authorization header", "client_secret_basic", "sec", true, false},
+		{"post puts secret in body", "client_secret_post", "sec", false, true},
+		{"none sends no secret", "none", "", false, false},
+		{"empty legacy falls back to basic", "", "sec", true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotBasic, gotBodySecret bool
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _, gotBasic = r.BasicAuth()
+				_ = r.ParseForm()
+				gotBodySecret = r.Form.Get("client_secret") != ""
+				_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "at"})
+			}))
+			defer srv.Close()
+
+			params := url.Values{"grant_type": {"authorization_code"}, "client_id": {"cid"}}
+			if _, err := doTokenRequest(srv.URL, params, "cid", tt.clientSecret, tt.authMethod); err != nil {
+				t.Fatal(err)
+			}
+			if gotBasic != tt.wantBasic {
+				t.Errorf("basic auth: got %v, want %v", gotBasic, tt.wantBasic)
+			}
+			if gotBodySecret != tt.wantBodySecret {
+				t.Errorf("body client_secret: got %v, want %v", gotBodySecret, tt.wantBodySecret)
+			}
+		})
 	}
 }
 
@@ -422,6 +526,77 @@ func runCmdAuthRelay(t *testing.T, args []string, env map[string]string) authOut
 		t.Fatalf("parse cmdAuth JSON: %v\nraw: %s", err, stdout)
 	}
 	return out
+}
+
+func TestCmdAuth_RelayMode_DynamicRegistration_HonorsServerAuthMethod(t *testing.T) {
+	setupTestConfigDir(t)
+
+	// Auth server advertises basic+post (so negotiation picks basic), but the
+	// registration endpoint assigns client_secret_post. Per RFC 7591 the
+	// server's assignment wins and must be what we persist.
+	var authSrv *httptest.Server
+	authSrv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			_ = json.NewEncoder(w).Encode(authServerMetadata{
+				Issuer:                            authSrv.URL,
+				AuthorizationEndpoint:             authSrv.URL + "/authorize",
+				TokenEndpoint:                     authSrv.URL + "/token",
+				RegistrationEndpoint:              authSrv.URL + "/register",
+				CodeChallengeMethodsSupported:     []string{"S256"},
+				TokenEndpointAuthMethodsSupported: []string{"client_secret_basic", "client_secret_post"},
+			})
+		case "/register":
+			var req clientRegistrationRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req.TokenEndpointAuthMethod != "client_secret_basic" {
+				t.Errorf("expected negotiated request method client_secret_basic, got %q", req.TokenEndpointAuthMethod)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(clientRegistrationResponse{
+				ClientID:                "srv-cid",
+				ClientSecret:            "srv-secret",
+				TokenEndpointAuthMethod: "client_secret_post",
+			})
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	t.Cleanup(authSrv.Close)
+
+	var resourceSrv *httptest.Server
+	resourceSrv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/oauth-protected-resource" {
+			_ = json.NewEncoder(w).Encode(protectedResourceMetadata{
+				AuthorizationServers: []string{authSrv.URL},
+				Resource:             resourceSrv.URL,
+			})
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	t.Cleanup(resourceSrv.Close)
+
+	if err := addServerConfig(ServerConfig{Name: "test", Transport: "streamable-http", URL: resourceSrv.URL}); err != nil {
+		t.Fatal(err)
+	}
+
+	// No MCP_CLIENT_ID -> dynamic registration path.
+	out := runCmdAuthRelay(t, []string{"test", "--callback-url", "http://localhost:9999/cb"}, nil)
+
+	pending, _, err := findPendingAuthByNonce(out.Nonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending == nil {
+		t.Fatal("no pending auth persisted")
+	}
+	if pending.TokenEndpointAuthMethod != "client_secret_post" {
+		t.Errorf("persisted method should honor server assignment, got %q", pending.TokenEndpointAuthMethod)
+	}
+	if pending.ClientID != "srv-cid" || pending.ClientSecret != "srv-secret" {
+		t.Errorf("unexpected persisted client creds: %q / %q", pending.ClientID, pending.ClientSecret)
+	}
 }
 
 func TestCmdAuth_RelayMode_NoStartURL_EmitsRawUpstream(t *testing.T) {
@@ -648,10 +823,10 @@ func TestFetchAuthServerMetadata_RejectsUnsupportedS256(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/oauth-authorization-server" {
 			_ = json.NewEncoder(w).Encode(authServerMetadata{
-				Issuer:                           "https://auth.example.com",
-				AuthorizationEndpoint:            "https://auth.example.com/authorize",
-				TokenEndpoint:                    "https://auth.example.com/token",
-				CodeChallengeMethodsSupported:     []string{"plain"},
+				Issuer:                        "https://auth.example.com",
+				AuthorizationEndpoint:         "https://auth.example.com/authorize",
+				TokenEndpoint:                 "https://auth.example.com/token",
+				CodeChallengeMethodsSupported: []string{"plain"},
 			})
 			return
 		}
@@ -672,10 +847,10 @@ func TestFetchAuthServerMetadata_AcceptsS256(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/oauth-authorization-server" {
 			_ = json.NewEncoder(w).Encode(authServerMetadata{
-				Issuer:                           "https://auth.example.com",
-				AuthorizationEndpoint:            "https://auth.example.com/authorize",
-				TokenEndpoint:                    "https://auth.example.com/token",
-				CodeChallengeMethodsSupported:     []string{"S256", "plain"},
+				Issuer:                        "https://auth.example.com",
+				AuthorizationEndpoint:         "https://auth.example.com/authorize",
+				TokenEndpoint:                 "https://auth.example.com/token",
+				CodeChallengeMethodsSupported: []string{"S256", "plain"},
 			})
 			return
 		}

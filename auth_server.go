@@ -23,6 +23,7 @@ func localOAuthFlow(
 	clientID, clientSecret string,
 	codeVerifier, codeChallenge string,
 	nonce, resource string,
+	authMethod string,
 ) error {
 	defer func() { _ = listener.Close() }()
 
@@ -54,14 +55,15 @@ func localOAuthFlow(
 
 		// Exchange code for tokens
 		pending := &PendingAuth{
-			Nonce:        nonce,
-			CodeVerifier: codeVerifier,
-			ClientID:     clientID,
-			ClientSecret: clientSecret,
-			TokenURL:     authMeta.TokenEndpoint,
-			Resource:     resource,
-			RedirectURI:  redirectURI,
-			ServerName:   name,
+			Nonce:                   nonce,
+			CodeVerifier:            codeVerifier,
+			ClientID:                clientID,
+			ClientSecret:            clientSecret,
+			TokenURL:                authMeta.TokenEndpoint,
+			Resource:                resource,
+			RedirectURI:             redirectURI,
+			ServerName:              name,
+			TokenEndpointAuthMethod: authMethod,
 		}
 
 		logStderr("exchanging authorization code for tokens...")
@@ -70,7 +72,7 @@ func localOAuthFlow(
 			return fmt.Errorf("token exchange failed: %w", err)
 		}
 
-		auth := tokensFromResponse(tokens, clientID, clientSecret, authMeta.TokenEndpoint, resource)
+		auth := tokensFromResponse(tokens, clientID, clientSecret, authMeta.TokenEndpoint, resource, authMethod)
 
 		if err := saveAuth(name, auth); err != nil {
 			return fmt.Errorf("save auth: %w", err)
