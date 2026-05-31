@@ -60,19 +60,22 @@ type AuthTokens struct {
 	ClientSecret string `json:"client_secret,omitempty"`
 	TokenURL     string `json:"token_endpoint,omitempty"`
 	Resource     string `json:"resource,omitempty"`
+	// Empty for tokens saved before this field existed; refresh falls back to basic.
+	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method,omitempty"`
 }
 
 // PendingAuth represents in-flight OAuth state saved to disk.
 type PendingAuth struct {
-	Nonce        string `json:"nonce"`
-	CodeVerifier string `json:"code_verifier"`
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret,omitempty"`
-	TokenURL     string `json:"token_endpoint"`
-	Resource     string `json:"resource"`
-	RedirectURI  string `json:"redirect_uri"`
-	ServerName   string `json:"server_name"`
-	CreatedAt    int64  `json:"created_at"`
+	Nonce                   string `json:"nonce"`
+	CodeVerifier            string `json:"code_verifier"`
+	ClientID                string `json:"client_id"`
+	ClientSecret            string `json:"client_secret,omitempty"`
+	TokenURL                string `json:"token_endpoint"`
+	Resource                string `json:"resource"`
+	RedirectURI             string `json:"redirect_uri"`
+	ServerName              string `json:"server_name"`
+	CreatedAt               int64  `json:"created_at"`
+	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method,omitempty"`
 }
 
 // ToolCache represents cached tool definitions for a server.
