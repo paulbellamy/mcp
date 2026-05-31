@@ -61,10 +61,8 @@ type authServerMetadata struct {
 	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported,omitempty"`
 }
 
-// chooseTokenAuthMethod selects a token endpoint client-authentication method
-// the CLI supports from the server's advertised list. Per RFC 8414 an absent
-// list defaults to client_secret_basic. Preference order keeps already-working
-// servers on basic while supporting servers that reject it.
+// chooseTokenAuthMethod picks a supported method from the server's advertised
+// list. An absent list defaults to client_secret_basic per RFC 8414.
 func chooseTokenAuthMethod(supported []string) (string, error) {
 	if len(supported) == 0 {
 		return "client_secret_basic", nil
@@ -184,9 +182,6 @@ func cmdAuth(args []string) error {
 		return fmt.Errorf("OAuth discovery failed: %w", err)
 	}
 
-	// Negotiate the token endpoint client-authentication method from what the
-	// server advertises. Hard-coding client_secret_basic breaks servers that
-	// only accept client_secret_post or none (public + PKCE).
 	authMethod, err := chooseTokenAuthMethod(authMeta.TokenEndpointAuthMethodsSupported)
 	if err != nil {
 		return err
@@ -247,8 +242,7 @@ func cmdAuth(args []string) error {
 		}
 		regClientID = reg.ClientID
 		regClientSecret = reg.ClientSecret
-		// Per RFC 7591 §3.2.1 the server's response is authoritative and may
-		// assign a different auth method than requested; honor it if returned.
+		// RFC 7591: the server's assigned method wins over the one we requested.
 		if reg.TokenEndpointAuthMethod != "" {
 			authMethod = reg.TokenEndpointAuthMethod
 		}
@@ -527,19 +521,14 @@ func buildAuthorizationURL(meta *authServerMetadata, clientID, redirectURI, code
 // doTokenRequest sends a POST to a token endpoint with the given form params,
 // authenticating the client per the negotiated token endpoint auth method.
 func doTokenRequest(tokenURL string, params url.Values, clientID, clientSecret, authMethod string) (*tokenResponse, error) {
-	// A "none" public client (PKCE only) sends no client secret. For
-	// client_secret_post the secret goes in the form body; otherwise
-	// (client_secret_basic, or empty for tokens saved before this field
-	// existed — the RFC 8414 default) it goes in the Authorization header.
 	useBasic := false
 	switch authMethod {
 	case "none":
-		// no client authentication
 	case "client_secret_post":
 		if clientSecret != "" {
 			params.Set("client_secret", clientSecret)
 		}
-	default:
+	default: // client_secret_basic, or empty (legacy tokens)
 		useBasic = clientSecret != ""
 	}
 

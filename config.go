@@ -60,10 +60,7 @@ type AuthTokens struct {
 	ClientSecret string `json:"client_secret,omitempty"`
 	TokenURL     string `json:"token_endpoint,omitempty"`
 	Resource     string `json:"resource,omitempty"`
-	// TokenEndpointAuthMethod is the negotiated client authentication method
-	// for the token endpoint (e.g. "client_secret_basic", "client_secret_post",
-	// "none"). Empty for tokens saved before this field existed; treated as the
-	// RFC 8414 default ("client_secret_basic") on refresh.
+	// Empty for tokens saved before this field existed; refresh falls back to basic.
 	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method,omitempty"`
 }
 

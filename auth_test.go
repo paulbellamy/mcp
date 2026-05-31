@@ -531,9 +531,8 @@ func runCmdAuthRelay(t *testing.T, args []string, env map[string]string) authOut
 func TestCmdAuth_RelayMode_DynamicRegistration_HonorsServerAuthMethod(t *testing.T) {
 	setupTestConfigDir(t)
 
-	// Auth server advertises basic+post (so negotiation picks basic), but the
-	// registration endpoint assigns client_secret_post. Per RFC 7591 the
-	// server's assignment wins and must be what we persist.
+	// We'd negotiate basic, but the server assigns post; RFC 7591 says its
+	// assignment wins.
 	var authSrv *httptest.Server
 	authSrv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
