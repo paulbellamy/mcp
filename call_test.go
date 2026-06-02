@@ -186,6 +186,55 @@ func TestCallToolFlow(t *testing.T) {
 	}
 }
 
+// TestCallToolFlow_EmptyArguments verifies that a tool called with no
+// parameters still sends an explicit empty arguments object ({}), rather than
+// dropping the field entirely. Some servers reject a tools/call that omits it.
+func TestCallToolFlow_EmptyArguments(t *testing.T) {
+	var gotArguments json.RawMessage
+	var hadArguments bool
+	transport := &mockTransport{
+		sendFunc: func(req jsonrpcRequest) (jsonrpcResponse, error) {
+			data, _ := json.Marshal(req.Params)
+			var raw map[string]json.RawMessage
+			if err := json.Unmarshal(data, &raw); err != nil {
+				t.Fatal(err)
+			}
+			gotArguments, hadArguments = raw["arguments"]
+
+			result := toolCallResult{
+				Content: []contentBlock{{Type: "text", Text: "ok"}},
+			}
+			resultData, _ := json.Marshal(result)
+			return jsonrpcResponse{
+				JSONRPC: "2.0",
+				ID:      json.RawMessage(fmt.Sprintf("%d", req.ID)),
+				Result:  resultData,
+			}, nil
+		},
+	}
+
+	// Call with no params at all (the empty-arguments case).
+	if _, err := executeToolCall(transport, "noargs", nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if !hadArguments {
+		t.Fatal("expected arguments field to be present, but it was dropped")
+	}
+	if string(gotArguments) != "{}" {
+		t.Errorf("expected arguments to be {}, got %s", gotArguments)
+	}
+
+	// Also verify an empty (non-nil) map serializes the same way.
+	hadArguments = false
+	gotArguments = nil
+	if _, err := executeToolCall(transport, "noargs", map[string]any{}, false); err != nil {
+		t.Fatal(err)
+	}
+	if !hadArguments || string(gotArguments) != "{}" {
+		t.Errorf("expected arguments {} for empty map, got present=%v value=%s", hadArguments, gotArguments)
+	}
+}
+
 func TestCallToolFlow_JSONRPCError(t *testing.T) {
 	transport := &mockTransport{
 		sendFunc: func(req jsonrpcRequest) (jsonrpcResponse, error) {
