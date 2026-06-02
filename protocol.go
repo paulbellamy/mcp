@@ -59,6 +59,11 @@ type clientInfo struct {
 	Version string `json:"version"`
 }
 
+// codeMethodNotFound is the JSON-RPC error code a server returns when it does
+// not implement a method (e.g. a server with no resources support replying to
+// resources/list). We treat it as "feature unsupported" rather than a failure.
+const codeMethodNotFound = -32601
+
 type toolsListParams struct {
 	Cursor string `json:"cursor,omitempty"`
 }
@@ -72,6 +77,54 @@ type mcpTool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	InputSchema json.RawMessage `json:"inputSchema,omitempty"`
+}
+
+// Resource protocol types
+
+type resourcesListParams struct {
+	Cursor string `json:"cursor,omitempty"`
+}
+
+type resourcesListResult struct {
+	Resources  []mcpResource `json:"resources"`
+	NextCursor string        `json:"nextCursor,omitempty"`
+}
+
+type mcpResource struct {
+	URI         string `json:"uri"`
+	Name        string `json:"name,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mimeType,omitempty"`
+	Size        int64  `json:"size,omitempty"`
+}
+
+type resourceTemplatesListResult struct {
+	ResourceTemplates []mcpResourceTemplate `json:"resourceTemplates"`
+	NextCursor        string                `json:"nextCursor,omitempty"`
+}
+
+type mcpResourceTemplate struct {
+	URITemplate string `json:"uriTemplate"`
+	Name        string `json:"name,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mimeType,omitempty"`
+}
+
+type resourceReadParams struct {
+	URI string `json:"uri"`
+}
+
+type resourceReadResult struct {
+	Contents []resourceContents `json:"contents"`
+}
+
+type resourceContents struct {
+	URI      string `json:"uri,omitempty"`
+	MimeType string `json:"mimeType,omitempty"`
+	Text     string `json:"text,omitempty"`
+	Blob     string `json:"blob,omitempty"`
 }
 
 type toolCallParams struct {
@@ -104,6 +157,30 @@ type callOutput struct {
 	Content   string `json:"content"`
 	IsError   bool   `json:"isError"`
 	Truncated bool   `json:"truncated,omitempty"`
+}
+
+// resourceOutput is the unified `mcp resources` row for both concrete
+// resources (URI set) and resource templates (URITemplate set).
+type resourceOutput struct {
+	Server      string `json:"server"`
+	URI         string `json:"uri,omitempty"`
+	URITemplate string `json:"uriTemplate,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mimeType,omitempty"`
+}
+
+type readOutput struct {
+	Contents  []readContent `json:"contents"`
+	Truncated bool          `json:"truncated,omitempty"`
+}
+
+type readContent struct {
+	URI      string `json:"uri,omitempty"`
+	MimeType string `json:"mimeType,omitempty"`
+	Text     string `json:"text,omitempty"`
+	Blob     string `json:"blob,omitempty"`
 }
 
 type streamEvent struct {

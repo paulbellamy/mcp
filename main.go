@@ -35,6 +35,10 @@ func main() {
 		err = cmdSchema(cmdArgs)
 	case "stats":
 		err = cmdStats(cmdArgs)
+	case "resources":
+		err = cmdResources(cmdArgs)
+	case "read":
+		err = cmdRead(cmdArgs)
 	case "call":
 		err = cmdCall(cmdArgs)
 	case "auth":
@@ -80,6 +84,8 @@ Commands:
   tools [server|url] [flags]     List available tools (compact by default)
   schema <server> <tool>         Show full schema for a tool
   stats [--full]                 Show estimated token cost of tool schemas
+  resources [server|url] [flags] List readable resources (and templates)
+  read <server|url> <uri> ...    Read a resource's contents by URI
   call <server|url> <tool> ...   Call a tool
   auth <name> [flags]            Authenticate with a server
   ping <server|url>               Ping a server (liveness check)
@@ -102,6 +108,14 @@ Tools flags:
   --full                         Include inputSchema in output (default: compact)
   --refresh                      Force refresh from server
   --json                         Output as JSON (default: human-readable)
+
+Resources flags:
+  --query <q>                    Filter resources by uri/name/description
+  --json                         Output as JSON (default: human-readable)
+
+Read flags:
+  --max-output N                 Truncate output to N chars (default 30000)
+  --timeout <duration>           Per-call timeout (e.g. 30s, 5m; 0 = no limit)
 
 Auth flags:
   --callback-url <url>           Use relay mode

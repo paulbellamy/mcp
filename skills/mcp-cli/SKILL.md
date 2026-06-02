@@ -120,6 +120,29 @@ mcp call <server> <tool> --stream --params '{"key": "value"}'
 mcp call <server> <tool> --help
 ```
 
+### Read resources
+Some servers (e.g. Notion) expose data as **resources** — addressable by URI —
+rather than (or in addition to) tools. List them, then read one by URI.
+```bash
+# List readable resources and resource templates across servers
+mcp resources
+
+# Filter by server
+mcp resources <server>
+
+# Search by keyword (uri/name/description)
+mcp resources <server> --query "search term"
+
+# Read a resource's contents by URI (output: {"contents":[{"uri","mimeType","text"|"blob"}]})
+mcp read <server> <uri>
+
+# Truncate large resources (default 30000 chars; full output saved to a file)
+mcp read <server> <uri> --max-output 5000
+```
+Resource listings are fetched live (not cached). Templates appear with a
+`uriTemplate` (e.g. `notion://page/{id}`) — substitute the parameters to form a
+concrete URI before reading.
+
 ### Authenticate
 ```bash
 # OAuth (outputs auth URL for user)
@@ -178,6 +201,7 @@ mcp call <server> list --params '{}' | jq '.content' | ...
 - `MCP_CALLBACK_URL` is pre-configured in `~/.bashrc` — no need to pass `--callback-url` manually.
 - `mcp tools` JSON output omits `inputSchema` by default. Use `mcp schema` to fetch one, or `mcp tools --full` for everything (expensive).
 - Tool call results are JSON: `{"content": "...", "isError": false}`
+- Resource reads are JSON: `{"contents": [{"uri": "...", "mimeType": "...", "text": "..."}]}` (binary resources use `blob` with base64 instead of `text`)
 - Exit code 0 = success, 1 = error
 - Logs and progress go to stderr, data to stdout
 - Token refresh is automatic — if a token is expired, the CLI refreshes it before the call

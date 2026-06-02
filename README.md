@@ -46,6 +46,9 @@ this CLI.
   `MCP_AUTH_TOKEN`.
 - **Cross-server search.** `mcp tools --query foo` ranks tools by keyword
   across every connected server. Native has no equivalent.
+- **Resource access.** `mcp resources` lists a server's readable resources and
+  templates; `mcp read <uri>` fetches their contents. Useful for servers (like
+  Notion) that expose data as resources rather than tools.
 - **Token visibility.** `mcp stats` (and `--full`) tells you exactly what
   each server's schemas would cost if loaded natively.
 - **Streaming.** `mcp call --stream` emits NDJSON progress events for
@@ -100,6 +103,12 @@ mcp tools --full
 # Fetch the full schema for one tool on demand
 mcp schema <server> <tool>
 
+# List readable resources (and resource templates) — name + uri + description
+mcp resources [server] [--query "search term"]
+
+# Read a resource's contents by URI
+mcp read <server> <uri>
+
 # Estimate the token cost of cached schemas across servers
 mcp stats [--full]
 
@@ -118,6 +127,8 @@ mcp auth <name> --callback-url <url>
 # Use a server without adding it (pass URL directly)
 mcp tools https://api.example.com/mcp
 mcp call https://api.example.com/mcp <tool> --params '{"key": "value"}'
+mcp resources https://api.example.com/mcp
+mcp read https://api.example.com/mcp <uri>
 mcp ping https://api.example.com/mcp
 
 # Authenticate with a token for ad-hoc URLs
