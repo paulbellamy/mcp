@@ -16,16 +16,16 @@ const jsonrpcVersion = "2.0"
 // JSON-RPC 2.0 types
 
 type jsonrpcRequest struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      int         `json:"id"`
-	Method  string      `json:"method"`
-	Params  any `json:"params,omitempty"`
+	JSONRPC string `json:"jsonrpc"`
+	ID      int    `json:"id"`
+	Method  string `json:"method"`
+	Params  any    `json:"params,omitempty"`
 }
 
 type jsonrpcNotification struct {
-	JSONRPC string      `json:"jsonrpc"`
-	Method  string      `json:"method"`
-	Params  any `json:"params,omitempty"`
+	JSONRPC string `json:"jsonrpc"`
+	Method  string `json:"method"`
+	Params  any    `json:"params,omitempty"`
 }
 
 type jsonrpcResponse struct {
@@ -75,8 +75,12 @@ type mcpTool struct {
 }
 
 type toolCallParams struct {
-	Name      string                 `json:"name"`
-	Arguments map[string]any `json:"arguments,omitempty"`
+	Name string `json:"name"`
+	// Arguments is always serialized, even when empty. Per the MCP spec the
+	// field is optional, but some servers reject a tools/call that omits it.
+	// A nil map would marshal to null, so executeToolCall ensures it is a
+	// non-nil map; an empty map marshals to {}.
+	Arguments map[string]any `json:"arguments"`
 }
 
 type toolCallResult struct {

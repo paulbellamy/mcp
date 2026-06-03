@@ -372,6 +372,12 @@ func showToolHelp(serverName, toolName string) error {
 
 // executeToolCall sends a tools/call request and returns the output.
 func executeToolCall(transport Transport, toolName string, params map[string]any, stream bool) (callOutput, error) {
+	// Always send an arguments object, even when empty. A nil map would
+	// marshal to null; an empty map marshals to {} which servers expect.
+	if params == nil {
+		params = map[string]any{}
+	}
+
 	req := jsonrpcRequest{
 		JSONRPC: jsonrpcVersion,
 		ID:      nextID(),
