@@ -36,6 +36,26 @@ func validateToolName(name string) error {
 	return nil
 }
 
+// validateResourceURI stays permissive because resource URIs are server-defined
+// (arbitrary schemes), unlike tool names: real path safety for saved output is
+// sanitizePathComponent, so this only guards against control-character and
+// oversized input.
+func validateResourceURI(uri string) error {
+	if uri == "" {
+		return fmt.Errorf("resource uri must not be empty")
+	}
+	const maxURILen = 2048
+	if len(uri) > maxURILen {
+		return fmt.Errorf("resource uri too long (%d bytes, max %d)", len(uri), maxURILen)
+	}
+	for _, r := range uri {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("resource uri contains control characters")
+		}
+	}
+	return nil
+}
+
 // ServerConfig represents a configured MCP server.
 type ServerConfig struct {
 	Name      string   `json:"name"`
