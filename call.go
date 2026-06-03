@@ -24,7 +24,7 @@ const defaultMaxOutput = 30_000
 // Tool parameters can be passed as individual --flags or via --params JSON.
 func cmdCall(args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: mcp call <server> <tool> [--<param> <value> ...] [--params '{...}'] [--stream] [--max-output N]")
+		return fmt.Errorf("usage: mcp call <server> <tool> [--<param> <value> ...] [--params '{...}'] [--stream] [--max-output N] [--truncate head|tail]")
 	}
 
 	serverName := args[0]
@@ -43,6 +43,7 @@ func cmdCall(args []string) error {
 	stream := false
 	showHelp := false
 	maxOutput := defaultMaxOutput
+	truncMode := "head"
 	var timeout time.Duration
 	timeoutSet := false
 	dynamicFlags := make(map[string]string)
@@ -68,6 +69,15 @@ func cmdCall(args []string) error {
 				return fmt.Errorf("invalid --max-output value: %s", args[i])
 			}
 			maxOutput = n
+		case "--truncate":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--truncate requires a value (head or tail)")
+			}
+			i++
+			truncMode = args[i]
+			if truncMode != "head" && truncMode != "tail" {
+				return fmt.Errorf("invalid --truncate value %q (want head or tail)", args[i])
+			}
 		case "--timeout":
 			if i+1 >= len(args) {
 				return fmt.Errorf("--timeout requires a value (e.g. 30s, 5m, or 0 for none)")
@@ -186,10 +196,7 @@ func cmdCall(args []string) error {
 	// Truncate output to stay within token budgets.
 	if maxOutput > 0 && len(output.Content) > maxOutput {
 		savedPath := saveFullOutput(serverName, toolName, output.Content)
-		output.Content = output.Content[:maxOutput] + fmt.Sprintf("\n[output truncated at %d chars]", maxOutput)
-		if savedPath != "" {
-			output.Content += fmt.Sprintf("\n[full output saved to %s]", savedPath)
-		}
+		output.Content = truncateContent(output.Content, maxOutput, truncMode, savedPath)
 		output.Truncated = true
 	}
 
@@ -210,6 +217,22 @@ var unsafePathChars = regexp.MustCompile(`[^a-zA-Z0-9._-]`)
 
 func sanitizePathComponent(s string) string {
 	return unsafePathChars.ReplaceAllString(s, "_")
+}
+
+// truncateContent shrinks content to maxOutput bytes, keeping either the head
+// (the default — first N bytes) or the tail (last N bytes). The dropped portion
+// is replaced with a marker noting how much was cut and, when available, where
+// the full output was saved so the rest can be retrieved later.
+func truncateContent(content string, maxOutput int, mode, savedPath string) string {
+	marker := fmt.Sprintf("[output truncated at %d chars]", maxOutput)
+	if savedPath != "" {
+		marker += fmt.Sprintf("\n[full output saved to %s]", savedPath)
+	}
+	if mode == "tail" {
+		// Marker first so the agent sees the beginning was dropped.
+		return marker + "\n" + content[len(content)-maxOutput:]
+	}
+	return content[:maxOutput] + "\n" + marker
 }
 
 // saveFullOutput writes the full output to a file under the user's config
