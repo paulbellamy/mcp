@@ -565,3 +565,66 @@ func TestCmdRead_InvalidMaxOutput(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+func TestListAllResources_NoSpuriousTruncationWarning(t *testing.T) {
+	// Two pages that complete normally must NOT emit a truncation warning,
+	// and resource Size must be propagated into the output.
+	callCount := 0
+	transport := &mockTransport{
+		sendFunc: func(req jsonrpcRequest) (jsonrpcResponse, error) {
+			callCount++
+			var result resourcesListResult
+			if callCount == 1 {
+				result = resourcesListResult{
+					Resources:  []mcpResource{{URI: "r1", Size: 42}},
+					NextCursor: "p2",
+				}
+			} else {
+				result = resourcesListResult{Resources: []mcpResource{{URI: "r2"}}}
+			}
+			data, _ := json.Marshal(result)
+			return jsonrpcResponse{
+				JSONRPC: "2.0",
+				ID:      json.RawMessage(fmt.Sprintf("%d", req.ID)),
+				Result:  data,
+			}, nil
+		},
+	}
+
+	var resources []resourceOutput
+	var listErr error
+	stderr := captureStderr(t, func() {
+		resources, listErr = listAllResources(transport, "srv")
+	})
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	if strings.Contains(stderr, "truncated") {
+		t.Errorf("unexpected truncation warning on normal completion: %q", stderr)
+	}
+	if len(resources) != 2 {
+		t.Fatalf("expected 2 resources, got %d", len(resources))
+	}
+	if resources[0].Size != 42 {
+		t.Errorf("expected Size 42 to be propagated, got %d", resources[0].Size)
+	}
+}
+
+func TestValidateResourceURI(t *testing.T) {
+	valid := []string{"notion://page/123", "https://example.com/a?b=c#d", "file:///tmp/x.txt"}
+	for _, u := range valid {
+		if err := validateResourceURI(u); err != nil {
+			t.Errorf("valid uri %q rejected: %v", u, err)
+		}
+	}
+
+	if err := validateResourceURI(""); err == nil {
+		t.Error("empty uri should be rejected")
+	}
+	if err := validateResourceURI("file:///a\nb"); err == nil {
+		t.Error("uri with control character should be rejected")
+	}
+	if err := validateResourceURI("x://" + strings.Repeat("a", 3000)); err == nil {
+		t.Error("over-long uri should be rejected")
+	}
+}

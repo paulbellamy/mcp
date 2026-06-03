@@ -79,19 +79,18 @@ func listAllResources(transport Transport, serverName string) ([]resourceOutput,
 				Title:       r.Title,
 				Description: r.Description,
 				MimeType:    r.MimeType,
+				Size:        r.Size,
 			})
 		}
 
 		if result.NextCursor == "" {
-			break
+			return all, nil
 		}
 		cursor = result.NextCursor
 	}
 
-	if cursor != "" {
-		logStderr("warning: resources list truncated after %d pages", maxPages)
-	}
-
+	// Reached only if the loop exhausted maxPages while a cursor remained.
+	logStderr("warning: resources list truncated after %d pages", maxPages)
 	return all, nil
 }
 
@@ -141,15 +140,13 @@ func listAllResourceTemplates(transport Transport, serverName string) ([]resourc
 		}
 
 		if result.NextCursor == "" {
-			break
+			return all, nil
 		}
 		cursor = result.NextCursor
 	}
 
-	if cursor != "" {
-		logStderr("warning: resource templates list truncated after %d pages", maxPages)
-	}
-
+	// Reached only if the loop exhausted maxPages while a cursor remained.
+	logStderr("warning: resource templates list truncated after %d pages", maxPages)
 	return all, nil
 }
 
@@ -398,8 +395,8 @@ Flags:
 
 	serverName := args[0]
 	uri := args[1]
-	if uri == "" {
-		return fmt.Errorf("resource uri must not be empty")
+	if err := validateResourceURI(uri); err != nil {
+		return err
 	}
 
 	maxOutput := defaultMaxOutput

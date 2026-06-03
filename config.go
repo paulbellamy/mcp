@@ -36,6 +36,27 @@ func validateToolName(name string) error {
 	return nil
 }
 
+// validateResourceURI rejects empty, over-long, or control-character resource
+// URIs. Resource URIs are server-defined (arbitrary schemes), so this stays
+// permissive rather than imposing a charset like validateToolName; the
+// path-safety guarantee for saved output comes from sanitizePathComponent in
+// saveFullOutput. This is defense-in-depth against control-character injection.
+func validateResourceURI(uri string) error {
+	if uri == "" {
+		return fmt.Errorf("resource uri must not be empty")
+	}
+	const maxURILen = 2048
+	if len(uri) > maxURILen {
+		return fmt.Errorf("resource uri too long (%d bytes, max %d)", len(uri), maxURILen)
+	}
+	for _, r := range uri {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("resource uri contains control characters")
+		}
+	}
+	return nil
+}
+
 // ServerConfig represents a configured MCP server.
 type ServerConfig struct {
 	Name      string   `json:"name"`

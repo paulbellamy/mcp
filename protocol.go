@@ -169,6 +169,7 @@ type resourceOutput struct {
 	Title       string `json:"title,omitempty"`
 	Description string `json:"description,omitempty"`
 	MimeType    string `json:"mimeType,omitempty"`
+	Size        int64  `json:"size,omitempty"`
 }
 
 type readOutput struct {
