@@ -202,6 +202,7 @@ mcp call <server> list --params '{}' | jq '.content' | ...
 - `mcp tools` JSON output omits `inputSchema` by default. Use `mcp schema` to fetch one, or `mcp tools --full` for everything (expensive).
 - Tool call results are JSON: `{"content": "...", "isError": false}`
 - Resource reads are JSON: `{"contents": [{"uri": "...", "mimeType": "...", "text": "..."}]}` (binary resources use `blob` with base64 instead of `text`)
+- Output is truncated to 30000 chars by default to protect the context window; when this happens you get `"truncated": true`, an `[output truncated at N chars]` marker, and an `[full output saved to <path>]` line so you can read the rest. Tune with `--max-output N` (0 disables). For `mcp call`, keep the end instead of the start with `--truncate tail` (default is `head`).
 - Exit code 0 = success, 1 = error
 - Logs and progress go to stderr, data to stdout
 - Token refresh is automatic — if a token is expired, the CLI refreshes it before the call

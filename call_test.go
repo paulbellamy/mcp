@@ -186,6 +186,55 @@ func TestCallToolFlow(t *testing.T) {
 	}
 }
 
+// TestCallToolFlow_EmptyArguments verifies that a tool called with no
+// parameters still sends an explicit empty arguments object ({}), rather than
+// dropping the field entirely. Some servers reject a tools/call that omits it.
+func TestCallToolFlow_EmptyArguments(t *testing.T) {
+	var gotArguments json.RawMessage
+	var hadArguments bool
+	transport := &mockTransport{
+		sendFunc: func(req jsonrpcRequest) (jsonrpcResponse, error) {
+			data, _ := json.Marshal(req.Params)
+			var raw map[string]json.RawMessage
+			if err := json.Unmarshal(data, &raw); err != nil {
+				t.Fatal(err)
+			}
+			gotArguments, hadArguments = raw["arguments"]
+
+			result := toolCallResult{
+				Content: []contentBlock{{Type: "text", Text: "ok"}},
+			}
+			resultData, _ := json.Marshal(result)
+			return jsonrpcResponse{
+				JSONRPC: "2.0",
+				ID:      json.RawMessage(fmt.Sprintf("%d", req.ID)),
+				Result:  resultData,
+			}, nil
+		},
+	}
+
+	// Call with no params at all (the empty-arguments case).
+	if _, err := executeToolCall(transport, "noargs", nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if !hadArguments {
+		t.Fatal("expected arguments field to be present, but it was dropped")
+	}
+	if string(gotArguments) != "{}" {
+		t.Errorf("expected arguments to be {}, got %s", gotArguments)
+	}
+
+	// Also verify an empty (non-nil) map serializes the same way.
+	hadArguments = false
+	gotArguments = nil
+	if _, err := executeToolCall(transport, "noargs", map[string]any{}, false); err != nil {
+		t.Fatal(err)
+	}
+	if !hadArguments || string(gotArguments) != "{}" {
+		t.Errorf("expected arguments {} for empty map, got present=%v value=%s", hadArguments, gotArguments)
+	}
+}
+
 func TestCallToolFlow_JSONRPCError(t *testing.T) {
 	transport := &mockTransport{
 		sendFunc: func(req jsonrpcRequest) (jsonrpcResponse, error) {
@@ -320,6 +369,55 @@ func TestCmdCall_Truncation(t *testing.T) {
 	}
 	if !strings.Contains(out.Content, "[output truncated at 50 chars]") {
 		t.Errorf("expected truncation message, got %q", out.Content)
+	}
+}
+
+func TestCmdCall_TruncationTail(t *testing.T) {
+	setupTestConfigDir(t)
+
+	// Distinct head and tail so we can tell which end was kept.
+	longContent := strings.Repeat("H", 100) + strings.Repeat("T", 100)
+	srv := newMockMCPServerWithContent(t, longContent)
+	defer srv.Close()
+
+	var err error
+	data := captureStdout(t, func() {
+		err = cmdCall([]string{srv.URL, "echo", "--params", `{}`, "--max-output", "50", "--truncate", "tail"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out callOutput
+	if err := json.Unmarshal([]byte(data), &out); err != nil {
+		t.Fatalf("invalid JSON: %s", data)
+	}
+	if !out.Truncated {
+		t.Error("expected Truncated=true")
+	}
+	if !strings.Contains(out.Content, "[output truncated at 50 chars]") {
+		t.Errorf("expected truncation message, got %q", out.Content)
+	}
+	// Tail mode keeps the last 50 bytes (all "T") and drops the leading "H"s.
+	if !strings.HasSuffix(out.Content, strings.Repeat("T", 50)) {
+		t.Errorf("expected tail kept, got %q", out.Content)
+	}
+	if strings.Contains(out.Content, "H") {
+		t.Errorf("expected head dropped, got %q", out.Content)
+	}
+}
+
+func TestCmdCall_InvalidTruncate(t *testing.T) {
+	setupTestConfigDir(t)
+	srv := newMockMCPServer(t, nil)
+	defer srv.Close()
+
+	err := cmdCall([]string{srv.URL, "echo", "--params", `{}`, "--truncate", "middle"})
+	if err == nil {
+		t.Fatal("expected error for invalid --truncate value")
+	}
+	if !strings.Contains(err.Error(), "head or tail") {
+		t.Errorf("expected head/tail hint, got %v", err)
 	}
 }
 
