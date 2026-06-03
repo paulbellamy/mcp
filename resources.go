@@ -11,9 +11,6 @@ import (
 	"time"
 )
 
-// discoverResources connects to a server and lists its resources and resource
-// templates, merged into a single slice. Templates are reported with their
-// URITemplate set instead of URI.
 func discoverResources(server *ServerConfig, authToken string) ([]resourceOutput, error) {
 	transport, err := mcpConnect(server, authToken)
 	if err != nil {
@@ -26,8 +23,7 @@ func discoverResources(server *ServerConfig, authToken string) ([]resourceOutput
 		return nil, err
 	}
 
-	// Resource templates are optional; a server may support resources but not
-	// templates (or neither). Skip them silently when unsupported.
+	// Templates are optional; their absence must not fail the whole listing.
 	templates, err := listAllResourceTemplates(transport, server.Name)
 	if err != nil {
 		logStderr("warning: failed to list resource templates from %q: %v", server.Name, err)
@@ -36,9 +32,6 @@ func discoverResources(server *ServerConfig, authToken string) ([]resourceOutput
 	return append(resources, templates...), nil
 }
 
-// listAllResources fetches all resources from a connected transport, handling
-// pagination. A method-not-found error is treated as "no resources" so servers
-// without resource support contribute nothing rather than failing the listing.
 func listAllResources(transport Transport, serverName string) ([]resourceOutput, error) {
 	var all []resourceOutput
 	var cursor string
@@ -89,13 +82,10 @@ func listAllResources(transport Transport, serverName string) ([]resourceOutput,
 		cursor = result.NextCursor
 	}
 
-	// Reached only if the loop exhausted maxPages while a cursor remained.
 	logStderr("warning: resources list truncated after %d pages", maxPages)
 	return all, nil
 }
 
-// listAllResourceTemplates fetches all resource templates, handling pagination.
-// Method-not-found is treated as "no templates".
 func listAllResourceTemplates(transport Transport, serverName string) ([]resourceOutput, error) {
 	var all []resourceOutput
 	var cursor string
@@ -145,13 +135,12 @@ func listAllResourceTemplates(transport Transport, serverName string) ([]resourc
 		cursor = result.NextCursor
 	}
 
-	// Reached only if the loop exhausted maxPages while a cursor remained.
 	logStderr("warning: resource templates list truncated after %d pages", maxPages)
 	return all, nil
 }
 
-// cmdResources handles the `mcp resources` command. Unlike tools, resource
-// listings are fetched live (not cached) since resources tend to be dynamic.
+// cmdResources fetches listings live rather than caching them like tools,
+// because resources change far more often than tool schemas.
 func cmdResources(args []string) error {
 	var serverFilter, query string
 	var jsonOutput bool
@@ -189,7 +178,6 @@ Flags:
 		}
 	}
 
-	// Ad-hoc URL: connect directly, skip config lookup.
 	if serverFilter != "" && isURL(serverFilter) {
 		server, authToken, err := resolveServer(serverFilter)
 		if err != nil {
@@ -255,8 +243,6 @@ Flags:
 	return outputResourcesList(all, query, jsonOutput)
 }
 
-// resourceID returns the URI for a concrete resource or the URITemplate for a
-// template — whichever identifies the row.
 func (r resourceOutput) resourceID() string {
 	if r.URITemplate != "" {
 		return r.URITemplate
@@ -264,7 +250,6 @@ func (r resourceOutput) resourceID() string {
 	return r.URI
 }
 
-// outputResourcesList sorts, filters, and outputs a list of resources.
 func outputResourcesList(resources []resourceOutput, query string, jsonOutput bool) error {
 	sort.Slice(resources, func(i, j int) bool {
 		if resources[i].Server != resources[j].Server {
@@ -297,14 +282,12 @@ func outputResourcesList(resources []resourceOutput, query string, jsonOutput bo
 	return printResourcesHuman(resources)
 }
 
-// printResourcesHuman formats resources as CLI-style help text grouped by server.
 func printResourcesHuman(resources []resourceOutput) error {
 	if len(resources) == 0 {
 		_, _ = fmt.Fprintln(os.Stderr, "No resources found.")
 		return nil
 	}
 
-	// Find max id length for alignment.
 	maxIDLen := 0
 	for _, r := range resources {
 		if l := len(r.resourceID()); l > maxIDLen {
@@ -332,7 +315,6 @@ func printResourcesHuman(resources []resourceOutput) error {
 			lastServer = r.Server
 		}
 
-		// Build the descriptive suffix: title/name and description.
 		var label string
 		switch {
 		case r.Title != "":
@@ -373,7 +355,6 @@ func printResourcesHuman(resources []resourceOutput) error {
 	return nil
 }
 
-// cmdRead handles the `mcp read <server|url> <uri>` command.
 func cmdRead(args []string) error {
 	for _, a := range args {
 		if a == "--help" || a == "-h" {
@@ -459,7 +440,6 @@ Flags:
 	return outputJSON(output)
 }
 
-// readResource sends a resources/read request and renders the result.
 func readResource(transport Transport, uri string) (readOutput, error) {
 	resp, err := transport.Send(jsonrpcRequest{
 		JSONRPC: jsonrpcVersion,
@@ -486,9 +466,6 @@ func readResource(transport Transport, uri string) (readOutput, error) {
 	return out, nil
 }
 
-// truncateReadOutput trims resource contents to fit within maxOutput characters
-// (counting text and base64 blob length), saving the full payload to a file
-// when truncation occurs. maxOutput <= 0 disables truncation.
 func truncateReadOutput(out *readOutput, maxOutput int, serverName, uri string) {
 	if maxOutput <= 0 {
 		return
@@ -522,8 +499,6 @@ func truncateReadOutput(out *readOutput, maxOutput int, serverName, uri string) 
 	}
 }
 
-// truncateField trims s to the remaining budget, decrementing it by the number
-// of characters kept.
 func truncateField(s string, remaining *int) string {
 	if s == "" {
 		return s

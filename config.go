@@ -36,11 +36,10 @@ func validateToolName(name string) error {
 	return nil
 }
 
-// validateResourceURI rejects empty, over-long, or control-character resource
-// URIs. Resource URIs are server-defined (arbitrary schemes), so this stays
-// permissive rather than imposing a charset like validateToolName; the
-// path-safety guarantee for saved output comes from sanitizePathComponent in
-// saveFullOutput. This is defense-in-depth against control-character injection.
+// validateResourceURI stays permissive because resource URIs are server-defined
+// (arbitrary schemes), unlike tool names: real path safety for saved output is
+// sanitizePathComponent, so this only guards against control-character and
+// oversized input.
 func validateResourceURI(uri string) error {
 	if uri == "" {
 		return fmt.Errorf("resource uri must not be empty")

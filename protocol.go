@@ -59,9 +59,8 @@ type clientInfo struct {
 	Version string `json:"version"`
 }
 
-// codeMethodNotFound is the JSON-RPC error code a server returns when it does
-// not implement a method (e.g. a server with no resources support replying to
-// resources/list). We treat it as "feature unsupported" rather than a failure.
+// codeMethodNotFound is treated as "feature unsupported" (e.g. a server without
+// resources support) rather than a hard failure.
 const codeMethodNotFound = -32601
 
 type toolsListParams struct {
@@ -163,8 +162,8 @@ type callOutput struct {
 	Truncated bool   `json:"truncated,omitempty"`
 }
 
-// resourceOutput is the unified `mcp resources` row for both concrete
-// resources (URI set) and resource templates (URITemplate set).
+// resourceOutput is one row for both concrete resources (URI) and templates
+// (URITemplate), so `mcp resources` can list them together.
 type resourceOutput struct {
 	Server      string `json:"server"`
 	URI         string `json:"uri,omitempty"`

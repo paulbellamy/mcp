@@ -567,8 +567,7 @@ func TestCmdRead_InvalidMaxOutput(t *testing.T) {
 }
 
 func TestListAllResources_NoSpuriousTruncationWarning(t *testing.T) {
-	// Two pages that complete normally must NOT emit a truncation warning,
-	// and resource Size must be propagated into the output.
+	// Regression: a normal multi-page listing must not emit a truncation warning.
 	callCount := 0
 	transport := &mockTransport{
 		sendFunc: func(req jsonrpcRequest) (jsonrpcResponse, error) {
