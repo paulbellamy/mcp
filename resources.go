@@ -484,12 +484,7 @@ func readResource(transport Transport, uri string) (readOutput, error) {
 
 	out := readOutput{Contents: make([]readContent, 0, len(result.Contents))}
 	for _, c := range result.Contents {
-		out.Contents = append(out.Contents, readContent{
-			URI:      c.URI,
-			MimeType: c.MimeType,
-			Text:     c.Text,
-			Blob:     c.Blob,
-		})
+		out.Contents = append(out.Contents, readContent(c))
 	}
 	return out, nil
 }
