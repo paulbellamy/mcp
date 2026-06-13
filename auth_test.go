@@ -439,6 +439,34 @@ func TestBuildStartHandoffURL_RoundTrip(t *testing.T) {
 	}
 }
 
+// The relay-required nonce/t params must appear BEFORE the long `destination`
+// blob in the raw query. An LLM relaying this URL tends to stop at
+// destination's trailing `state=<nonce>`; with destination last, nothing after
+// it can be truncated. See buildStartHandoffURL's doc comment.
+func TestBuildStartHandoffURL_DestinationIsLast(t *testing.T) {
+	upstream := "https://auth.example.com/authorize?client_id=cid&redirect_uri=https%3A%2F%2Fgw.example.com%2Fcb%3Fnonce%3Dn-abc%26t%3D1700000000&state=n-abc"
+
+	wrapped := buildStartHandoffURL(
+		"https://gw.example.com/api/oauth/relay/agent-1/start",
+		"n-abc", 1700000000, upstream,
+	)
+
+	parsed, err := url.Parse(wrapped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := parsed.RawQuery
+	destIdx := strings.Index(raw, "destination=")
+	nonceIdx := strings.Index(raw, "nonce=")
+	tIdx := strings.Index(raw, "t=")
+	if destIdx < 0 || nonceIdx < 0 || tIdx < 0 {
+		t.Fatalf("missing params in raw query: %s", raw)
+	}
+	if destIdx < nonceIdx || destIdx < tIdx {
+		t.Errorf("destination must be last; got order: %s", raw)
+	}
+}
+
 func TestBuildStartHandoffURL_PreservesExistingQuery(t *testing.T) {
 	wrapped := buildStartHandoffURL(
 		"https://gw.example.com/start?tenant=acme",

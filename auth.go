@@ -661,13 +661,26 @@ func buildRelayRedirectURIAt(callbackURL, nonce string, t int64) string {
 //
 // Any gateway that follows the same handoff convention can opt in by
 // setting MCP_AUTH_START_URL.
+//
+// Param ORDER matters, even though /start parses them order-agnostically. This
+// URL is commonly relayed to the user by an LLM agent that regenerates it
+// token-by-token. The `destination` value is a ~500-char OAuth authorize URL
+// whose own trailing param is `state=<nonce>` — a natural "end of URL" the model
+// stops at, silently dropping anything after it. With nonce/t emitted after
+// destination (as url.Values.Encode()'s alphabetical sort would do, since
+// destination < nonce < t), the relay-required params get truncated and /start
+// rejects the link with "Invalid start URL". Pin the short nonce/t params first
+// and `destination` LAST so the model's stopping point is the real end of the
+// URL and the required params survive.
 func buildStartHandoffURL(startURL, nonce string, t int64, upstreamURL string) string {
 	u, _ := url.Parse(startURL) // guaranteed valid by validateEndpointURL
-	q := u.Query()
-	q.Set("nonce", nonce)
-	q.Set("t", fmt.Sprintf("%d", t))
-	q.Set("destination", upstreamURL)
-	u.RawQuery = q.Encode()
+
+	lead := u.Query() // any params already on the start URL (e.g. a tenant id)
+	lead.Set("nonce", nonce)
+	lead.Set("t", fmt.Sprintf("%d", t))
+
+	tail := url.Values{"destination": {upstreamURL}}
+	u.RawQuery = lead.Encode() + "&" + tail.Encode()
 	return u.String()
 }
 
