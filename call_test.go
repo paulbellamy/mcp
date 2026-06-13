@@ -42,6 +42,25 @@ func TestCmdCall_ParamEqualsValue(t *testing.T) {
 	}
 }
 
+func TestCmdCall_RepeatedFlag(t *testing.T) {
+	err := cmdCall([]string{"server", "tool", "--env", "A=1", "--env", "B=2"})
+	if err == nil {
+		t.Fatal("expected error for repeated flag")
+	}
+	if !strings.Contains(err.Error(), "--env specified multiple times") {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	// Mixed --k=v and --k v forms of the same key must also be rejected.
+	err = cmdCall([]string{"server", "tool", "--env=A=1", "--env", "B=2"})
+	if err == nil {
+		t.Fatal("expected error for repeated flag across syntaxes")
+	}
+	if !strings.Contains(err.Error(), "--env specified multiple times") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 func TestCmdCall_UnexpectedPositionalArg(t *testing.T) {
 	err := cmdCall([]string{"server", "tool", "badarg"})
 	if err == nil {

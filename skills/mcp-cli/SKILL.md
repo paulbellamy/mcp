@@ -196,6 +196,17 @@ echo '{"query": "..."}' | mcp call <server> search
 mcp call <server> list --params '{}' | jq '.content' | ...
 ```
 
+## Quoting & argument semantics
+
+- Flag values are passed to the tool **verbatim** as strings — the CLI does
+  no splitting, quoting, or shell interpretation. If a command-like value
+  (e.g. `--cmd 'bash -c "..."'`) comes back mangled or word-split, that is
+  the **server's** parsing, not the CLI's. Run `mcp schema <server> <tool>`
+  and read the param description before retrying quoting variants — they
+  will all fail the same way.
+- **Repeating a flag is an error** — array/object params must go via
+  `--params` JSON.
+
 ## Notes
 
 - `MCP_CALLBACK_URL` is pre-configured in `~/.bashrc` — no need to pass `--callback-url` manually.

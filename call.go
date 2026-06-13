@@ -99,16 +99,23 @@ func cmdCall(args []string) error {
 				return fmt.Errorf("unexpected argument %q (use --<param> for tool parameters)", args[i])
 			}
 			key := strings.TrimPrefix(args[i], "--")
+			value := ""
 			// Support --param=value syntax.
 			if eqIdx := strings.IndexByte(key, '='); eqIdx >= 0 {
-				dynamicFlags[key[:eqIdx]] = key[eqIdx+1:]
+				key, value = key[:eqIdx], key[eqIdx+1:]
 			} else if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
 				// Boolean flag (no value follows or next arg is also a flag)
-				dynamicFlags[key] = "true"
+				value = "true"
 			} else {
 				i++
-				dynamicFlags[key] = args[i]
+				value = args[i]
 			}
+			// Silent last-wins on repeats loses data (e.g. two --env flags);
+			// JSON arguments can't repeat a key, so reject and point at --params.
+			if _, dup := dynamicFlags[key]; dup {
+				return fmt.Errorf("flag --%s specified multiple times; pass arrays via --params JSON", key)
+			}
+			dynamicFlags[key] = value
 		}
 	}
 
