@@ -148,19 +148,19 @@ func cmdCall(args []string) error {
 	} else if len(dynamicFlags) > 0 {
 		if adhoc {
 			// No cached schema for ad-hoc URLs — pass all values as strings.
-			logStderr("warning: no cached schema; flags will be passed as strings")
+			logStderr("warning: no cached schema; flags passed as strings (array/object params must use --params JSON)")
 			for k, v := range dynamicFlags {
 				params[k] = v
 			}
 		} else {
-			schema, err := getToolSchema(serverName, toolName)
+			schema, complexTypes, err := getToolSchema(serverName, toolName)
 			if err != nil {
-				logStderr("warning: no cached schema for %s/%s; flags will be passed as strings (run `mcp tools %s --refresh` to update)", serverName, toolName, serverName)
+				logStderr("warning: no cached schema for %s/%s; flags passed as strings — array/object params must use --params JSON (run `mcp tools %s --refresh` to cache types)", serverName, toolName, serverName)
 				for k, v := range dynamicFlags {
 					params[k] = v
 				}
 			} else {
-				coerced, err := coerceDynamicFlags(dynamicFlags, schema)
+				coerced, err := coerceDynamicFlags(dynamicFlags, schema, complexTypes)
 				if err != nil {
 					return err
 				}
@@ -335,7 +335,8 @@ func showToolHelp(serverName, toolName string) error {
 	fmt.Fprintf(os.Stderr, "%s — %s\n", toolName, desc)
 	fmt.Fprintf(os.Stderr, "  server: %s\n", serverName)
 
-	params, skipped := parseInputSchema(found.InputSchema)
+	params, complexTypes := parseInputSchema(found.InputSchema)
+	skipped := len(complexTypes)
 	if len(params) == 0 {
 		if skipped > 0 {
 			fmt.Fprintf(os.Stderr, "\nNo flag parameters (%d complex parameter(s) must be passed via --params JSON).\n", skipped)

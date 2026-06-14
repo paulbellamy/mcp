@@ -16,12 +16,12 @@ func TestParseInputSchema_Basic(t *testing.T) {
 		"required": ["query"]
 	}`)
 
-	params, skipped := parseInputSchema(schema)
+	params, complexTypes := parseInputSchema(schema)
 	if len(params) != 2 {
 		t.Fatalf("expected 2 params, got %d", len(params))
 	}
-	if skipped != 0 {
-		t.Errorf("expected 0 skipped, got %d", skipped)
+	if len(complexTypes) != 0 {
+		t.Errorf("expected 0 complex params, got %d", len(complexTypes))
 	}
 
 	// Sorted by name: limit, query
@@ -46,7 +46,7 @@ func TestParseInputSchema_Basic(t *testing.T) {
 	}
 }
 
-func TestParseInputSchema_SkipsComplexTypes(t *testing.T) {
+func TestParseInputSchema_SeparatesComplexTypes(t *testing.T) {
 	schema := json.RawMessage(`{
 		"type": "object",
 		"properties": {
@@ -56,15 +56,18 @@ func TestParseInputSchema_SkipsComplexTypes(t *testing.T) {
 		}
 	}`)
 
-	params, skipped := parseInputSchema(schema)
+	params, complexTypes := parseInputSchema(schema)
 	if len(params) != 1 {
-		t.Fatalf("expected 1 param (complex types skipped), got %d", len(params))
-	}
-	if skipped != 2 {
-		t.Errorf("expected 2 skipped, got %d", skipped)
+		t.Fatalf("expected 1 scalar param, got %d", len(params))
 	}
 	if params[0].Name != "name" {
 		t.Errorf("expected 'name', got %q", params[0].Name)
+	}
+	if complexTypes["metadata"] != "object" {
+		t.Errorf("expected metadata->object, got %q", complexTypes["metadata"])
+	}
+	if complexTypes["tags"] != "array" {
+		t.Errorf("expected tags->array, got %q", complexTypes["tags"])
 	}
 }
 
@@ -107,20 +110,20 @@ func TestParseInputSchema_WithEnum(t *testing.T) {
 }
 
 func TestParseInputSchema_Empty(t *testing.T) {
-	params, skipped := parseInputSchema(nil)
+	params, complexTypes := parseInputSchema(nil)
 	if len(params) != 0 {
 		t.Errorf("expected 0 params for nil schema, got %d", len(params))
 	}
-	if skipped != 0 {
-		t.Errorf("expected 0 skipped for nil schema, got %d", skipped)
+	if len(complexTypes) != 0 {
+		t.Errorf("expected 0 complex for nil schema, got %d", len(complexTypes))
 	}
 
-	params, skipped = parseInputSchema(json.RawMessage(`{}`))
+	params, complexTypes = parseInputSchema(json.RawMessage(`{}`))
 	if len(params) != 0 {
 		t.Errorf("expected 0 params for empty schema, got %d", len(params))
 	}
-	if skipped != 0 {
-		t.Errorf("expected 0 skipped for empty schema, got %d", skipped)
+	if len(complexTypes) != 0 {
+		t.Errorf("expected 0 complex for empty schema, got %d", len(complexTypes))
 	}
 }
 
@@ -165,7 +168,7 @@ func TestCoerceDynamicFlags_Types(t *testing.T) {
 		"verbose": "true",
 	}
 
-	result, err := coerceDynamicFlags(flags, params)
+	result, err := coerceDynamicFlags(flags, params, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,9 +191,51 @@ func TestCoerceDynamicFlags_InvalidNumber(t *testing.T) {
 	params := []toolParam{{Name: "limit", Type: "number"}}
 	flags := map[string]string{"limit": "abc"}
 
-	_, err := coerceDynamicFlags(flags, params)
+	_, err := coerceDynamicFlags(flags, params, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid number")
+	}
+}
+
+func TestCoerceDynamicFlags_ArrayParamFromJSON(t *testing.T) {
+	complexTypes := map[string]string{"cmd": "array"}
+	flags := map[string]string{"cmd": `["bash","-lc","cd /workspace && npm run build"]`}
+
+	result, err := coerceDynamicFlags(flags, nil, complexTypes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arr, ok := result["cmd"].([]any)
+	if !ok {
+		t.Fatalf("expected cmd to be a JSON array, got %T", result["cmd"])
+	}
+	if len(arr) != 3 || arr[0] != "bash" {
+		t.Errorf("unexpected argv: %v", arr)
+	}
+}
+
+func TestCoerceDynamicFlags_ArrayParamRejectsBareString(t *testing.T) {
+	complexTypes := map[string]string{"cmd": "array"}
+	// The sprites-exec foot-gun: a quoted shell line passed as a bare string.
+	flags := map[string]string{"cmd": `bash -c "cd /workspace && npm run build"`}
+
+	_, err := coerceDynamicFlags(flags, nil, complexTypes)
+	if err == nil {
+		t.Fatal("expected error for bare string on array-typed flag")
+	}
+	if !strings.Contains(err.Error(), "--params") {
+		t.Errorf("error should point at --params, got: %v", err)
+	}
+}
+
+func TestCoerceDynamicFlags_ObjectParamRejectsWrongKind(t *testing.T) {
+	complexTypes := map[string]string{"meta": "object"}
+	// Valid JSON, but an array where an object is required.
+	flags := map[string]string{"meta": `["a","b"]`}
+
+	_, err := coerceDynamicFlags(flags, nil, complexTypes)
+	if err == nil {
+		t.Fatal("expected error for array passed to object-typed flag")
 	}
 }
 
@@ -198,7 +243,7 @@ func TestCoerceDynamicFlags_UnknownFlag(t *testing.T) {
 	params := []toolParam{{Name: "query", Type: "string"}}
 	flags := map[string]string{"unknown": "value"}
 
-	result, err := coerceDynamicFlags(flags, params)
+	result, err := coerceDynamicFlags(flags, params, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
