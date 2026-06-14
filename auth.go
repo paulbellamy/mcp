@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -152,6 +153,12 @@ func cmdAuth(args []string) error {
 		startURL = os.Getenv("MCP_AUTH_START_URL")
 	}
 
+	// Short-URL relay: when the gateway advertises a /register endpoint, POST
+	// the destination there and hand the user a short start?nonce&t link
+	// instead of one carrying the fragile encoded destination.
+	registerURL := os.Getenv("MCP_AUTH_REGISTER_URL")
+	registerToken := os.Getenv("MCP_AUTH_REGISTER_TOKEN")
+
 	// Manual token mode
 	if token != "" {
 		if err := saveAuth(name, &AuthTokens{AccessToken: token}); err != nil {
@@ -268,9 +275,24 @@ func cmdAuth(args []string) error {
 			return fmt.Errorf("save pending auth: %w", err)
 		}
 
-		authURL := buildAuthorizationURL(authMeta, regClientID, redirectURI, codeChallenge, nonce, resource)
-		if startURL != "" {
-			authURL = buildStartHandoffURL(startURL, nonce, relayTimestamp, authURL)
+		upstreamURL := buildAuthorizationURL(authMeta, regClientID, redirectURI, codeChallenge, nonce, resource)
+
+		authURL := upstreamURL
+		switch {
+		case registerURL != "" && registerToken != "" && startURL != "":
+			if err := validateEndpointURL(registerURL, "register URL"); err != nil {
+				return err
+			}
+			if err := registerRelayDestination(registerURL, registerToken, nonce, relayTimestamp, upstreamURL); err != nil {
+				// Fall back to the inline handoff URL (still accepted by the
+				// gateway) so a /register outage doesn't break auth outright.
+				logStderr("relay destination registration failed (%v); falling back to inline start URL", err)
+				authURL = buildStartHandoffURL(startURL, nonce, relayTimestamp, upstreamURL)
+			} else {
+				authURL = buildShortStartURL(startURL, nonce, relayTimestamp)
+			}
+		case startURL != "":
+			authURL = buildStartHandoffURL(startURL, nonce, relayTimestamp, upstreamURL)
 		}
 
 		// Auth URL is returned via JSON stdout; don't duplicate to stderr
@@ -661,14 +683,75 @@ func buildRelayRedirectURIAt(callbackURL, nonce string, t int64) string {
 //
 // Any gateway that follows the same handoff convention can opt in by
 // setting MCP_AUTH_START_URL.
+//
+// Param ORDER matters, even though /start parses them order-agnostically. This
+// URL is commonly relayed to the user by an LLM agent that regenerates it
+// token-by-token. The `destination` value is a ~500-char OAuth authorize URL
+// whose own trailing param is `state=<nonce>` — a natural "end of URL" the model
+// stops at, silently dropping anything after it. With nonce/t emitted after
+// destination (as url.Values.Encode()'s alphabetical sort would do, since
+// destination < nonce < t), the relay-required params get truncated and /start
+// rejects the link with "Invalid start URL". Pin the short nonce/t params first
+// and `destination` LAST so the model's stopping point is the real end of the
+// URL and the required params survive.
 func buildStartHandoffURL(startURL, nonce string, t int64, upstreamURL string) string {
+	u, _ := url.Parse(startURL) // guaranteed valid by validateEndpointURL
+
+	lead := u.Query() // any params already on the start URL (e.g. a tenant id)
+	lead.Set("nonce", nonce)
+	lead.Set("t", fmt.Sprintf("%d", t))
+
+	tail := url.Values{"destination": {upstreamURL}}
+	u.RawQuery = lead.Encode() + "&" + tail.Encode()
+	return u.String()
+}
+
+// buildShortStartURL builds the short relay link used once the destination has
+// been registered out-of-band: just nonce + t, no `destination`. Short and
+// free of nested percent-encoding, so it survives both LLM truncation and a
+// stray percent-decode in transit (chat client, copy-paste).
+func buildShortStartURL(startURL, nonce string, t int64) string {
 	u, _ := url.Parse(startURL) // guaranteed valid by validateEndpointURL
 	q := u.Query()
 	q.Set("nonce", nonce)
 	q.Set("t", fmt.Sprintf("%d", t))
-	q.Set("destination", upstreamURL)
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+// registerRelayDestination POSTs the upstream OAuth destination to the gateway's
+// /register endpoint, authenticated with the gateway-issued token. The gateway
+// stores it keyed by (agent, nonce) so a later short /start?nonce&t can look it
+// up. Returns an error on any non-2xx so the caller can fall back.
+func registerRelayDestination(registerURL, token, nonce string, t int64, destination string) error {
+	body, err := json.Marshal(map[string]string{
+		"nonce":       nonce,
+		"t":           fmt.Sprintf("%d", t),
+		"destination": destination,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", registerURL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := authHTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		b, _ := readResponseBody(resp.Body)
+		return fmt.Errorf("register returned %d: %s", resp.StatusCode, string(b))
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
 }
 
 // fetchWellKnown GETs a well-known URL and returns the body on 200, or an error.
