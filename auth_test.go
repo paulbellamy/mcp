@@ -467,6 +467,179 @@ func TestBuildStartHandoffURL_DestinationIsLast(t *testing.T) {
 	}
 }
 
+func TestBuildShortStartURL(t *testing.T) {
+	got := buildShortStartURL(
+		"https://gw.example.com/api/oauth/relay/agent-1/start",
+		"n-abc", 1700000000,
+	)
+	parsed, err := url.Parse(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Path != "/api/oauth/relay/agent-1/start" {
+		t.Errorf("unexpected path %q", parsed.Path)
+	}
+	q := parsed.Query()
+	if q.Get("nonce") != "n-abc" {
+		t.Errorf("nonce=%q", q.Get("nonce"))
+	}
+	if q.Get("t") != "1700000000" {
+		t.Errorf("t=%q", q.Get("t"))
+	}
+	if q.Get("destination") != "" {
+		t.Errorf("short URL must carry no destination, got %q", q.Get("destination"))
+	}
+}
+
+func TestRegisterRelayDestination_SendsAuthedPayload(t *testing.T) {
+	var gotAuth, gotCT string
+	payload := map[string]string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotCT = r.Header.Get("Content-Type")
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	dest := "https://up.example.com/authorize?x=1"
+	if err := registerRelayDestination(srv.URL, "tok123", "n-abc", 1700000000, dest); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if gotAuth != "Bearer tok123" {
+		t.Errorf("auth header = %q", gotAuth)
+	}
+	if gotCT != "application/json" {
+		t.Errorf("content-type = %q", gotCT)
+	}
+	if payload["nonce"] != "n-abc" || payload["t"] != "1700000000" || payload["destination"] != dest {
+		t.Errorf("unexpected payload: %v", payload)
+	}
+}
+
+func TestRegisterRelayDestination_ErrorsOnNon2xx(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+	if err := registerRelayDestination(srv.URL, "tok", "n", 1700000000, "https://u.example.com/a"); err == nil {
+		t.Fatal("expected error on 403")
+	}
+}
+
+func TestCmdAuth_RelayMode_ShortURL(t *testing.T) {
+	setupTestConfigDir(t)
+	resourceURL := setupRelayAuthTestServer(t)
+
+	if err := addServerConfig(ServerConfig{
+		Name:      "test",
+		Transport: "streamable-http",
+		URL:       resourceURL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	registered := map[string]string{}
+	regSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer regtoken" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&registered)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer regSrv.Close()
+
+	out := runCmdAuthRelay(t,
+		[]string{
+			"test",
+			"--callback-url", "http://localhost:9999/cb",
+			"--start-url", "http://localhost:9999/start",
+		},
+		map[string]string{
+			"MCP_CLIENT_ID":           "cid",
+			"MCP_CLIENT_SECRET":       "secret",
+			"MCP_AUTH_REGISTER_URL":   regSrv.URL,
+			"MCP_AUTH_REGISTER_TOKEN": "regtoken",
+		},
+	)
+
+	parsed, err := url.Parse(out.AuthURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Path != "/start" {
+		t.Errorf("expected short /start path, got %q", parsed.Path)
+	}
+	q := parsed.Query()
+	if q.Get("nonce") != out.Nonce {
+		t.Errorf("nonce=%q want %q", q.Get("nonce"), out.Nonce)
+	}
+	if q.Get("t") == "" {
+		t.Error("missing t")
+	}
+	if q.Get("destination") != "" {
+		t.Errorf("short URL must not carry destination, got %q", q.Get("destination"))
+	}
+
+	// The destination was registered out-of-band, not put in the URL.
+	if registered["nonce"] != out.Nonce {
+		t.Errorf("register nonce=%q want %q", registered["nonce"], out.Nonce)
+	}
+	dest := registered["destination"]
+	dp, err := url.Parse(dest)
+	if err != nil {
+		t.Fatalf("parse registered destination: %v", err)
+	}
+	if !strings.HasSuffix(dp.Path, "/authorize") {
+		t.Errorf("registered destination not upstream /authorize: %q", dest)
+	}
+	if dp.Query().Get("state") != out.Nonce {
+		t.Errorf("registered destination state != nonce")
+	}
+}
+
+func TestCmdAuth_RelayMode_ShortURLFallsBackOnRegisterError(t *testing.T) {
+	setupTestConfigDir(t)
+	resourceURL := setupRelayAuthTestServer(t)
+
+	if err := addServerConfig(ServerConfig{
+		Name:      "test",
+		Transport: "streamable-http",
+		URL:       resourceURL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	regSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer regSrv.Close()
+
+	out := runCmdAuthRelay(t,
+		[]string{
+			"test",
+			"--callback-url", "http://localhost:9999/cb",
+			"--start-url", "http://localhost:9999/start",
+		},
+		map[string]string{
+			"MCP_CLIENT_ID":           "cid",
+			"MCP_CLIENT_SECRET":       "secret",
+			"MCP_AUTH_REGISTER_URL":   regSrv.URL,
+			"MCP_AUTH_REGISTER_TOKEN": "regtoken",
+		},
+	)
+
+	// Register failed → fall back to the inline handoff URL (carries destination).
+	parsed, err := url.Parse(out.AuthURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Query().Get("destination") == "" {
+		t.Errorf("expected fallback inline URL to carry destination, got %q", out.AuthURL)
+	}
+}
+
 func TestBuildStartHandoffURL_PreservesExistingQuery(t *testing.T) {
 	wrapped := buildStartHandoffURL(
 		"https://gw.example.com/start?tenant=acme",
