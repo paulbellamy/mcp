@@ -158,9 +158,10 @@ you'll only get back an `auth_url` (with `"status":"pending"`) when the server
 actually needs authenticating.
 
 ### Check if a server is connected
-Use `mcp ping` to test whether a server is reachable **and** your stored
-credentials are accepted — it opens a real session with the saved token, so a
-missing or invalid token makes it fail.
+Use `mcp ping` to test whether a server is reachable — and, for servers that
+require auth, whether your stored credentials are accepted. It opens a real
+session with the saved token, so against an auth-requiring server a missing or
+expired token makes it fail.
 ```bash
 mcp ping <server>
 ```

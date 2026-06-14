@@ -104,18 +104,24 @@ type tokenErrorResponse struct {
 	Description string `json:"error_description,omitempty"`
 }
 
+// connectProbeTimeout bounds the idempotency connect probe so a reachable but
+// unresponsive server can't stall `mcp auth` for the full default send timeout
+// before it falls through to the (10s-bounded) OAuth discovery.
+const connectProbeTimeout = 10 * time.Second
+
 // serverConnected reports whether an authenticated MCP session can already be
 // established with the server using its stored credentials (refreshing the
-// token if needed). It backs the idempotency of `mcp auth`: when true, there
-// is nothing to authenticate. A reachable server that accepts our credentials
-// completes the initialize handshake; a missing/invalid token surfaces as an
-// HTTP 401 (or other error) and reports not-connected.
+// token if needed). It backs the idempotency of `mcp auth`: when true, there is
+// nothing to authenticate — either the server accepted our credentials or it
+// requires none. A server that requires auth we don't have rejects the
+// initialize handshake (HTTP 401), and an unreachable server errors out; both
+// report not-connected.
 func serverConnected(server *ServerConfig) bool {
 	authToken, err := getAuthToken(server.Name)
 	if err != nil {
 		return false
 	}
-	transport, err := mcpConnect(server, authToken)
+	transport, err := mcpConnectTimeout(server, authToken, connectProbeTimeout)
 	if err != nil {
 		return false
 	}

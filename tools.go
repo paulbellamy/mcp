@@ -12,6 +12,14 @@ import (
 
 // mcpConnect creates a transport, sends initialize + initialized, returns the transport.
 func mcpConnect(server *ServerConfig, authToken string) (Transport, error) {
+	return mcpConnectTimeout(server, authToken, 0)
+}
+
+// mcpConnectTimeout is like mcpConnect but bounds the initialize handshake with
+// the given per-call timeout (0 = transport default). The auth idempotency
+// probe passes a short timeout so a reachable-but-unresponsive server can't
+// stall the command for the full default send timeout.
+func mcpConnectTimeout(server *ServerConfig, authToken string, timeout time.Duration) (Transport, error) {
 	var transport Transport
 	var err error
 
@@ -30,6 +38,10 @@ func mcpConnect(server *ServerConfig, authToken string) (Transport, error) {
 
 	if err != nil {
 		return nil, fmt.Errorf("create transport: %w", err)
+	}
+
+	if timeout > 0 {
+		transport.SetTimeout(timeout)
 	}
 
 	// MCP initialize handshake
