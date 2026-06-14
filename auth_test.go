@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -371,6 +373,132 @@ func TestCmdAuth_TLSEnforcement(t *testing.T) {
 	err = cmdAuth([]string{"local"})
 	if err != nil && strings.Contains(err.Error(), "requires HTTPS") {
 		t.Errorf("localhost should be exempt from TLS requirement, got: %v", err)
+	}
+}
+
+func TestCmdAuth_Idempotent_AlreadyConnected(t *testing.T) {
+	setupTestConfigDir(t)
+
+	// A reachable MCP server that completes the initialize handshake means we're
+	// already connected — auth should be a no-op. (This mock requires no auth;
+	// the credential-validated path is covered by TestServerConnected_* below.)
+	srv := newMockMCPServer(t, nil)
+	t.Cleanup(srv.Close)
+
+	if err := addServerConfig(ServerConfig{
+		Name:      "test",
+		Transport: "streamable-http",
+		URL:       srv.URL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var out authOutput
+	stdout := captureStdout(t, func() {
+		// --callback-url would normally start a relay OAuth flow; idempotency
+		// must short-circuit before then.
+		if err := cmdAuth([]string{"test", "--callback-url", "http://localhost:9999/cb"}); err != nil {
+			t.Fatalf("cmdAuth: %v", err)
+		}
+	})
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("parse cmdAuth JSON: %v\nraw: %s", err, stdout)
+	}
+
+	if out.Status != "complete" {
+		t.Errorf("expected status %q for already-connected server, got %q", "complete", out.Status)
+	}
+	if out.AuthURL != "" {
+		t.Errorf("expected no auth_url for already-connected server, got %q", out.AuthURL)
+	}
+	if out.Nonce != "" {
+		t.Errorf("expected no nonce for already-connected server, got %q", out.Nonce)
+	}
+
+	// The OAuth flow must not have run: no pending auth state should be written.
+	var pending PendingAuth
+	if found, _ := readJSON(pendingAuthPath("test"), &pending); found {
+		t.Error("expected no pending auth file for already-connected server")
+	}
+}
+
+// newAuthRequiringMCPServer is a mock MCP server that completes the handshake
+// only when the request carries Authorization: Bearer <wantToken>, returning
+// 401 otherwise. Used to exercise serverConnected's credential-validated path.
+func newAuthRequiringMCPServer(t *testing.T, wantToken string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+wantToken {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		body, _ := io.ReadAll(r.Body)
+		var raw map[string]json.RawMessage
+		_ = json.Unmarshal(body, &raw)
+
+		// Notification (e.g. notifications/initialized) — no id, nothing to reply.
+		if _, hasID := raw["id"]; !hasID {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		var req jsonrpcRequest
+		_ = json.Unmarshal(body, &req)
+
+		var resp jsonrpcResponse
+		resp.JSONRPC = "2.0"
+		resp.ID = json.RawMessage(fmt.Sprintf("%d", req.ID))
+		if req.Method == "initialize" {
+			resp.Result, _ = json.Marshal(map[string]any{
+				"protocolVersion": "2025-03-26",
+				"capabilities":    map[string]any{},
+				"serverInfo":      map[string]string{"name": "mock"},
+			})
+		} else {
+			resp.Error = &jsonrpcError{Code: -32601, Message: "method not found"}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+}
+
+func TestServerConnected_AcceptsValidStoredToken(t *testing.T) {
+	setupTestConfigDir(t)
+
+	srv := newAuthRequiringMCPServer(t, "good-token")
+	t.Cleanup(srv.Close)
+
+	server := &ServerConfig{Name: "test", Transport: "streamable-http", URL: srv.URL}
+	if err := saveAuth("test", &AuthTokens{AccessToken: "good-token"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !serverConnected(server) {
+		t.Error("expected serverConnected=true: server accepts the valid stored token")
+	}
+}
+
+func TestServerConnected_RejectsMissingOrInvalidToken(t *testing.T) {
+	setupTestConfigDir(t)
+
+	srv := newAuthRequiringMCPServer(t, "good-token")
+	t.Cleanup(srv.Close)
+
+	server := &ServerConfig{Name: "test", Transport: "streamable-http", URL: srv.URL}
+
+	// No token stored -> no Authorization header -> 401 -> not connected.
+	if serverConnected(server) {
+		t.Error("expected serverConnected=false with no stored token against an auth-requiring server")
+	}
+
+	// Wrong token -> 401 -> not connected.
+	if err := saveAuth("test", &AuthTokens{AccessToken: "wrong-token"}); err != nil {
+		t.Fatal(err)
+	}
+	if serverConnected(server) {
+		t.Error("expected serverConnected=false with an invalid stored token")
 	}
 }
 

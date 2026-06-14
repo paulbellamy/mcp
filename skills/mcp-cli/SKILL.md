@@ -151,11 +151,23 @@ mcp auth <name> --callback-url <your-callback-url>
 # Manual token
 MCP_AUTH_TOKEN=<bearer-token> mcp auth <name>
 ```
+`mcp auth` is idempotent: if the server is already connected it's a no-op that
+returns `{"status":"complete"}` immediately, without starting a new OAuth flow
+or handing back a fresh `auth_url`. So it's safe to run without checking first —
+you'll only get back an `auth_url` (with `"status":"pending"`) when the server
+actually needs authenticating.
 
-### Ping a server
+### Check if a server is connected
+Use `mcp ping` to test whether a server is reachable — and, for servers that
+require auth, whether your stored credentials are accepted. It opens a real
+session with the saved token, so against an auth-requiring server a missing or
+expired token makes it fail.
 ```bash
 mcp ping <server>
 ```
+- Connected: prints `{"status":"ok"}` and exits 0.
+- Not connected (unreachable, or unauthenticated/expired auth): exits 1 with the
+  error on stderr — run `mcp auth <server>` to authenticate.
 
 ### Remove a server
 ```bash
@@ -169,7 +181,11 @@ tool list, call it natively and skip the rest of this skill.
 
 1. Check what servers are available: `mcp servers`
 2. If the user asks to connect a new MCP server: `mcp add <name> <url>`
-3. If auth is needed: `mcp auth <name> --callback-url <your-callback-url>` — present the `auth_url` from the JSON output to the user
+3. If auth is needed: `mcp auth <name> --callback-url <your-callback-url>` — it's
+   idempotent (no-op if already connected), so it's safe to run. Only present an
+   `auth_url` to the user when the output has `"status":"pending"`; a
+   `"status":"complete"` means you're already connected. To check connection
+   status without authenticating, use `mcp ping <name>`.
 4. Discover tools (compact): `mcp tools <server>` — pick the tool you need
 5. Fetch the schema for that tool: `mcp schema <server> <tool>`
 6. Call it: `mcp call <server> <tool> --params '{...}'`
