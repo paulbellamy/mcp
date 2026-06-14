@@ -115,6 +115,12 @@ mcp stats [--full]
 # Call a tool
 mcp call <server> <tool> --params '{"key": "value"}'
 
+# Scalar params can also be passed as individual flags (coerced via the cached
+# schema). Array/object params can't be a bare string — pass inline JSON for the
+# flag, or use --params:
+mcp call <server> <tool> --query hello --limit 10
+mcp call <server> <tool> --cmd '["bash","-lc","cd /app && npm run build"]'
+
 # Stream progress for long-running tools
 mcp call <server> <tool> --stream --params '{"key": "value"}'
 
