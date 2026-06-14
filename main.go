@@ -87,7 +87,7 @@ Commands:
   resources [server|url] [flags] List readable resources (and templates)
   read <server|url> <uri> ...    Read a resource's contents by URI
   call <server|url> <tool> ...   Call a tool
-  auth <name> [flags]            Authenticate with a server
+  auth <name> [flags]            Authenticate with a server (idempotent; no-op if already connected)
   ping <server|url>               Ping a server (liveness check)
   daemon                         Keep stdio servers warm (foreground)
   daemon stop                    Stop the daemon

@@ -104,6 +104,25 @@ type tokenErrorResponse struct {
 	Description string `json:"error_description,omitempty"`
 }
 
+// serverConnected reports whether an authenticated MCP session can already be
+// established with the server using its stored credentials (refreshing the
+// token if needed). It backs the idempotency of `mcp auth`: when true, there
+// is nothing to authenticate. A reachable server that accepts our credentials
+// completes the initialize handshake; a missing/invalid token surfaces as an
+// HTTP 401 (or other error) and reports not-connected.
+func serverConnected(server *ServerConfig) bool {
+	authToken, err := getAuthToken(server.Name)
+	if err != nil {
+		return false
+	}
+	transport, err := mcpConnect(server, authToken)
+	if err != nil {
+		return false
+	}
+	_ = transport.Close()
+	return true
+}
+
 // cmdAuth handles the `mcp auth <name> [flags]` command.
 func cmdAuth(args []string) error {
 	cleanupExpiredPendingAuth()
@@ -180,6 +199,14 @@ func cmdAuth(args []string) error {
 
 	if err := validateEndpointURL(server.URL, "MCP server"); err != nil {
 		return err
+	}
+
+	// Idempotent: if the server is already reachable with stored credentials,
+	// there's nothing to authenticate. Short-circuits before the OAuth flow so
+	// we don't hand the user a fresh auth URL when we're already connected.
+	if serverConnected(server) {
+		logStderr("%q is already connected", name)
+		return outputJSON(authOutput{Status: "complete", Server: name})
 	}
 
 	// Step 1: Discover OAuth server

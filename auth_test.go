@@ -374,6 +374,51 @@ func TestCmdAuth_TLSEnforcement(t *testing.T) {
 	}
 }
 
+func TestCmdAuth_Idempotent_AlreadyConnected(t *testing.T) {
+	setupTestConfigDir(t)
+
+	// A reachable MCP server that completes the initialize handshake means we're
+	// already connected — auth should be a no-op.
+	srv := newMockMCPServer(t, nil)
+	t.Cleanup(srv.Close)
+
+	if err := addServerConfig(ServerConfig{
+		Name:      "test",
+		Transport: "streamable-http",
+		URL:       srv.URL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var out authOutput
+	stdout := captureStdout(t, func() {
+		// --callback-url would normally start a relay OAuth flow; idempotency
+		// must short-circuit before then.
+		if err := cmdAuth([]string{"test", "--callback-url", "http://localhost:9999/cb"}); err != nil {
+			t.Fatalf("cmdAuth: %v", err)
+		}
+	})
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("parse cmdAuth JSON: %v\nraw: %s", err, stdout)
+	}
+
+	if out.Status != "complete" {
+		t.Errorf("expected status %q for already-connected server, got %q", "complete", out.Status)
+	}
+	if out.AuthURL != "" {
+		t.Errorf("expected no auth_url for already-connected server, got %q", out.AuthURL)
+	}
+	if out.Nonce != "" {
+		t.Errorf("expected no nonce for already-connected server, got %q", out.Nonce)
+	}
+
+	// The OAuth flow must not have run: no pending auth state should be written.
+	var pending PendingAuth
+	if found, _ := readJSON(pendingAuthPath("test"), &pending); found {
+		t.Error("expected no pending auth file for already-connected server")
+	}
+}
+
 func TestBuildRelayRedirectURI_IncludesNonceAndTimestamp(t *testing.T) {
 	before := time.Now().Unix()
 	uri := buildRelayRedirectURI("https://example.com/callback", "nonce-abc")
