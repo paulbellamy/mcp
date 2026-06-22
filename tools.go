@@ -270,6 +270,19 @@ func cmdTools(args []string) error {
 			jsonOutput = true
 		case "--full":
 			full = true
+		case "--help", "-h":
+			_, _ = fmt.Fprintln(os.Stderr, `Usage: mcp tools [server|url] [--query <q>] [--refresh] [--json] [--full]
+
+List available tools across configured servers (compact by default). Reads
+from the local cache; use --refresh to fetch live from the server. Show the
+full schema for one tool with "mcp schema <server> <tool>".
+
+Flags:
+  --query <q>   Filter tools by name/description
+  --full        Include inputSchema in output (default: compact)
+  --refresh     Force refresh from server
+  --json        Output as JSON (default: human-readable)`)
+			return nil
 		default:
 			if strings.HasPrefix(args[i], "--") || strings.HasPrefix(args[i], "-") {
 				return fmt.Errorf("unknown flag: %s", args[i])

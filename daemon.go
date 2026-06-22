@@ -34,6 +34,15 @@ type daemon struct {
 }
 
 func cmdDaemon(args []string) error {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			_, _ = fmt.Fprintln(os.Stderr, `Usage: mcp daemon [stop]
+
+Keep stdio servers warm in the foreground so subsequent calls skip the
+process spawn. Run "mcp daemon stop" to stop a running daemon.`)
+			return nil
+		}
+	}
 	if len(args) > 0 && args[0] == "stop" {
 		return cmdDaemonStop()
 	}
