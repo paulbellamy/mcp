@@ -131,8 +131,6 @@ func serverConnected(server *ServerConfig) bool {
 
 // cmdAuth handles the `mcp auth <name> [flags]` command.
 func cmdAuth(args []string) error {
-	cleanupExpiredPendingAuth()
-
 	for _, arg := range args {
 		if arg == "--help" || arg == "-h" {
 			_, _ = fmt.Fprintln(os.Stderr, `Usage: mcp auth <name> [--callback-url <url>] [--start-url <url>]
@@ -156,6 +154,8 @@ Environment:
 			return nil
 		}
 	}
+
+	cleanupExpiredPendingAuth()
 
 	if len(args) < 1 {
 		return fmt.Errorf("usage: mcp auth <name> [--callback-url <url>] [--start-url <url>]")

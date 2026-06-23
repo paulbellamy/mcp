@@ -1,8 +1,10 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestHelpFlags verifies that every subcommand responds to --help/-h with a
@@ -37,6 +39,34 @@ func TestHelpFlags(t *testing.T) {
 				t.Errorf("expected %q in --help output, got %q", tc.want, stderr)
 			}
 		})
+	}
+}
+
+// TestAuthHelpNoSideEffects verifies that `mcp auth --help` is a pure docs
+// lookup: it must not run the expired-pending-auth cleanup, which would delete
+// files from disk.
+func TestAuthHelpNoSideEffects(t *testing.T) {
+	setupTestConfigDir(t)
+
+	// Write a pending-auth file and backdate it past the TTL so the cleanup
+	// would remove it if it ran.
+	path := pendingAuthPath("somesrv")
+	if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stale := time.Now().Add(-2 * pendingAuthTTL)
+	if err := os.Chtimes(path, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+
+	captureStderr(t, func() {
+		if err := cmdAuth([]string{"--help"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("auth --help deleted the expired pending file (side effect): %v", err)
 	}
 }
 
