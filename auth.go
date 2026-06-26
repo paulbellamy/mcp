@@ -131,6 +131,30 @@ func serverConnected(server *ServerConfig) bool {
 
 // cmdAuth handles the `mcp auth <name> [flags]` command.
 func cmdAuth(args []string) error {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			_, _ = fmt.Fprintln(os.Stderr, `Usage: mcp auth <name> [--callback-url <url>] [--start-url <url>]
+
+Authenticate with a configured streamable-http server. Idempotent: if the
+server is already reachable with stored credentials, this is a no-op. Runs an
+OAuth flow by default, or saves a bearer token when MCP_AUTH_TOKEN is set.
+
+Flags:
+  --callback-url <url>   Use relay mode
+  --start-url <url>      Wrap the auth URL in a gateway /start handoff
+                         (clicker-binding; opt-in)
+
+Environment:
+  MCP_AUTH_TOKEN         Bearer token (use instead of OAuth flow)
+  MCP_AUTH_CODE          Authorization code (set by gateway for OAuth callback)
+  MCP_CLIENT_ID          OAuth client ID (for static client credentials)
+  MCP_CLIENT_SECRET      OAuth client secret (for static client credentials)
+  MCP_CALLBACK_URL       Default callback URL for relay mode
+  MCP_AUTH_START_URL     Optional /start handoff URL (clicker binding)`)
+			return nil
+		}
+	}
+
 	cleanupExpiredPendingAuth()
 
 	if len(args) < 1 {

@@ -24,7 +24,7 @@ func main() {
 	var err error
 	switch cmd {
 	case "servers":
-		err = cmdServers()
+		err = cmdServers(cmdArgs)
 	case "add":
 		err = cmdAdd(cmdArgs)
 	case "remove":
@@ -133,7 +133,15 @@ Environment:
 }
 
 // cmdServers handles the `mcp servers` command.
-func cmdServers() error {
+func cmdServers(args []string) error {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			fmt.Fprintln(os.Stderr, `Usage: mcp servers
+
+List configured servers as JSON.`)
+			return nil
+		}
+	}
 	servers, err := loadServers()
 	if err != nil {
 		return err
@@ -143,6 +151,20 @@ func cmdServers() error {
 
 // cmdSetEnabled handles `mcp enable <name>` and `mcp disable <name>`.
 func cmdSetEnabled(args []string, enabled bool) error {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			if enabled {
+				fmt.Fprintln(os.Stderr, `Usage: mcp enable <name>
+
+Enable a previously disabled server.`)
+			} else {
+				fmt.Fprintln(os.Stderr, `Usage: mcp disable <name>
+
+Disable a server without removing it from the config.`)
+			}
+			return nil
+		}
+	}
 	if len(args) < 1 {
 		if enabled {
 			return fmt.Errorf("usage: mcp enable <name>")
@@ -181,6 +203,17 @@ func cmdSetEnabled(args []string, enabled bool) error {
 
 // cmdAdd handles the `mcp add` command.
 func cmdAdd(args []string) error {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			fmt.Fprintln(os.Stderr, `Usage: mcp add <name> <url>
+       mcp add <name> --stdio <command> [args...]
+
+Add a server to the config. HTTP servers are given a URL; stdio servers are
+launched via a local command. Tools are discovered immediately when reachable.`)
+			return nil
+		}
+	}
+
 	if len(args) < 2 {
 		return fmt.Errorf("usage: mcp add <name> <url>  or  mcp add <name> --stdio <command> [args...]")
 	}
@@ -243,6 +276,14 @@ func addServer(server ServerConfig, authToken string) error {
 
 // cmdRemove handles the `mcp remove` command.
 func cmdRemove(args []string) error {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			fmt.Fprintln(os.Stderr, `Usage: mcp remove <name>
+
+Remove a configured server and its cached tools.`)
+			return nil
+		}
+	}
 	if len(args) < 1 {
 		return fmt.Errorf("usage: mcp remove <name>")
 	}
@@ -259,6 +300,15 @@ func cmdRemove(args []string) error {
 
 // cmdPing handles the `mcp ping <server>` command.
 func cmdPing(args []string) error {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			fmt.Fprintln(os.Stderr, `Usage: mcp ping <server|url>
+
+Liveness check: connect to a server and send a ping. Prints {"status":"ok"}
+on success.`)
+			return nil
+		}
+	}
 	if len(args) < 1 {
 		return fmt.Errorf("usage: mcp ping <server|url>")
 	}
