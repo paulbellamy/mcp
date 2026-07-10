@@ -611,6 +611,19 @@ func doTokenRequest(tokenURL string, params url.Values, clientID, clientSecret, 
 		useBasic = clientSecret != ""
 	}
 
+	// RFC 6749 §2.3: a client MUST NOT use more than one authentication method
+	// per request. With HTTP Basic (client_secret_basic) the client_id already
+	// travels in the Authorization header, so it must not be repeated in the
+	// request body — strict servers (e.g. Notion) reject the duplicate with
+	// "Client must not use multiple authentication methods". For every other
+	// method the client_id is the client's only identifier and belongs in the
+	// body.
+	if useBasic {
+		params.Del("client_id")
+	} else if clientID != "" {
+		params.Set("client_id", clientID)
+	}
+
 	req, err := http.NewRequest("POST", tokenURL, strings.NewReader(params.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
@@ -672,7 +685,6 @@ func exchangeCode(pending *PendingAuth, code string) (*tokenResponse, error) {
 		"code":          {code},
 		"redirect_uri":  {pending.RedirectURI},
 		"code_verifier": {pending.CodeVerifier},
-		"client_id":     {pending.ClientID},
 	}
 
 	if pending.Resource != "" {
@@ -687,7 +699,6 @@ func refreshOAuthToken(tokens *AuthTokens) (*AuthTokens, error) {
 	params := url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {tokens.RefreshToken},
-		"client_id":     {tokens.ClientID},
 	}
 
 	if tokens.Resource != "" {
