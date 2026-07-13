@@ -303,24 +303,28 @@ func TestChooseTokenAuthMethod(t *testing.T) {
 
 func TestDoTokenRequest_AuthMethods(t *testing.T) {
 	tests := []struct {
-		name           string
-		authMethod     string
-		clientSecret   string
-		wantBasic      bool
-		wantBodySecret bool
+		name             string
+		authMethod       string
+		clientSecret     string
+		wantBasic        bool
+		wantBodySecret   bool
+		wantBodyClientID bool
 	}{
-		{"basic uses Authorization header", "client_secret_basic", "sec", true, false},
-		{"post puts secret in body", "client_secret_post", "sec", false, true},
-		{"none sends no secret", "none", "", false, false},
-		{"empty legacy falls back to basic", "", "sec", true, false},
+		// Basic auth carries client_id in the Authorization header, so it must
+		// NOT also appear in the body (RFC 6749 §2.3) — the Notion regression.
+		{"basic uses Authorization header", "client_secret_basic", "sec", true, false, false},
+		{"post puts secret in body", "client_secret_post", "sec", false, true, true},
+		{"none sends no secret", "none", "", false, false, true},
+		{"empty legacy falls back to basic", "", "sec", true, false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var gotBasic, gotBodySecret bool
+			var gotBasic, gotBodySecret, gotBodyClientID bool
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				_, _, gotBasic = r.BasicAuth()
 				_ = r.ParseForm()
 				gotBodySecret = r.Form.Get("client_secret") != ""
+				gotBodyClientID = r.Form.Get("client_id") != ""
 				_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "at"})
 			}))
 			defer srv.Close()
@@ -335,7 +339,59 @@ func TestDoTokenRequest_AuthMethods(t *testing.T) {
 			if gotBodySecret != tt.wantBodySecret {
 				t.Errorf("body client_secret: got %v, want %v", gotBodySecret, tt.wantBodySecret)
 			}
+			if gotBodyClientID != tt.wantBodyClientID {
+				t.Errorf("body client_id: got %v, want %v", gotBodyClientID, tt.wantBodyClientID)
+			}
 		})
+	}
+}
+
+// TestExchangeCode_BasicAuthNoDuplicateAuth reproduces the Notion reauth
+// failure: with client_secret_basic the request must present exactly one
+// client authentication method. Sending both an Authorization: Basic header
+// and a client_id form field makes Notion reject the exchange with
+// "invalid_request: Client must not use multiple authentication methods".
+func TestExchangeCode_BasicAuthNoDuplicateAuth(t *testing.T) {
+	var gotBasic, gotBodyClientID bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _, gotBasic = r.BasicAuth()
+		_ = r.ParseForm()
+		gotBodyClientID = r.Form.Get("client_id") != ""
+
+		// Emulate Notion: reject requests that use more than one auth method.
+		if gotBasic && gotBodyClientID {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(tokenErrorResponse{
+				Error:       "invalid_request",
+				Description: "Client must not use multiple authentication methods",
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "at"})
+	}))
+	defer srv.Close()
+
+	pending := &PendingAuth{
+		CodeVerifier:            "verifier",
+		ClientID:                "cid",
+		ClientSecret:            "secret",
+		TokenURL:                srv.URL,
+		RedirectURI:             "http://127.0.0.1:9999/callback",
+		TokenEndpointAuthMethod: "client_secret_basic",
+	}
+
+	tokens, err := exchangeCode(pending, "the-code")
+	if err != nil {
+		t.Fatalf("exchangeCode: %v", err)
+	}
+	if tokens.AccessToken != "at" {
+		t.Errorf("access token: got %q, want %q", tokens.AccessToken, "at")
+	}
+	if !gotBasic {
+		t.Error("expected client_secret_basic to authenticate via Authorization header")
+	}
+	if gotBodyClientID {
+		t.Error("client_id must not appear in the body when using Basic auth")
 	}
 }
 
