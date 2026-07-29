@@ -82,6 +82,9 @@ type AuthTokens struct {
 	Resource     string `json:"resource,omitempty"`
 	// Empty for tokens saved before this field existed; refresh falls back to basic.
 	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method,omitempty"`
+	// Issuer of the authorization server the credentials are bound to. Empty
+	// for tokens saved before issuer binding existed (no comparison applies).
+	Issuer string `json:"issuer,omitempty"`
 }
 
 // PendingAuth represents in-flight OAuth state saved to disk.
@@ -96,6 +99,7 @@ type PendingAuth struct {
 	ServerName              string `json:"server_name"`
 	CreatedAt               int64  `json:"created_at"`
 	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method,omitempty"`
+	Issuer                  string `json:"issuer,omitempty"`
 }
 
 // ToolCache represents cached tool definitions for a server.

@@ -60,6 +60,7 @@ type authServerMetadata struct {
 	ScopesSupported                   []string `json:"scopes_supported,omitempty"`
 	CodeChallengeMethodsSupported     []string `json:"code_challenge_methods_supported,omitempty"`
 	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported,omitempty"`
+	ClientIDMetadataDocumentSupported bool     `json:"client_id_metadata_document_supported,omitempty"`
 }
 
 // chooseTokenAuthMethod picks a supported method from the server's advertised
@@ -84,6 +85,7 @@ type clientRegistrationRequest struct {
 	GrantTypes              []string `json:"grant_types"`
 	ResponseTypes           []string `json:"response_types"`
 	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
+	ApplicationType         string   `json:"application_type"`
 }
 
 type clientRegistrationResponse struct {
@@ -145,12 +147,13 @@ Flags:
                          (clicker-binding; opt-in)
 
 Environment:
-  MCP_AUTH_TOKEN         Bearer token (use instead of OAuth flow)
-  MCP_AUTH_CODE          Authorization code (set by gateway for OAuth callback)
-  MCP_CLIENT_ID          OAuth client ID (for static client credentials)
-  MCP_CLIENT_SECRET      OAuth client secret (for static client credentials)
-  MCP_CALLBACK_URL       Default callback URL for relay mode
-  MCP_AUTH_START_URL     Optional /start handoff URL (clicker binding)`)
+  MCP_AUTH_TOKEN           Bearer token (use instead of OAuth flow)
+  MCP_AUTH_CODE            Authorization code (set by gateway for OAuth callback)
+  MCP_CLIENT_ID            OAuth client ID (for static client credentials)
+  MCP_CLIENT_SECRET        OAuth client secret (for static client credentials)
+  MCP_CLIENT_METADATA_URL  HTTPS URL of a client ID metadata document (CIMD)
+  MCP_CALLBACK_URL         Default callback URL for relay mode
+  MCP_AUTH_START_URL       Optional /start handoff URL (clicker binding)`)
 			return nil
 		}
 	}
@@ -193,6 +196,7 @@ Environment:
 	token := os.Getenv("MCP_AUTH_TOKEN")
 	clientID := os.Getenv("MCP_CLIENT_ID")
 	clientSecret := os.Getenv("MCP_CLIENT_SECRET")
+	metadataURL := os.Getenv("MCP_CLIENT_METADATA_URL")
 
 	// Env var fallback for flags
 	if callbackURL == "" {
@@ -231,19 +235,45 @@ Environment:
 		return err
 	}
 
-	// Idempotent: if the server is already reachable with stored credentials,
-	// there's nothing to authenticate. Short-circuits before the OAuth flow so
-	// we don't hand the user a fresh auth URL when we're already connected.
-	if serverConnected(server) {
-		logStderr("%q is already connected", name)
-		return outputJSON(authOutput{Status: "complete", Server: name})
+	// CIMD: validate the client metadata URL before any network so a
+	// misconfigured deployment fails with a clear error.
+	if metadataURL != "" {
+		if err := validateClientMetadataURL(metadataURL); err != nil {
+			return err
+		}
 	}
 
-	// Step 1: Discover OAuth server
-	logStderr("discovering OAuth server for %s...", server.URL)
-	resource, authMeta, err := discoverOAuth(server.URL)
-	if err != nil {
-		return fmt.Errorf("OAuth discovery failed: %w", err)
+	// Issuer binding: when the stored credentials are bound to an issuer,
+	// discover the authorization server up front and refuse to reuse them if
+	// the resource now points at a different issuer. Tokens saved before the
+	// issuer field existed (empty issuer) skip the comparison.
+	var resource string
+	var authMeta *authServerMetadata
+	if stored, loadErr := loadAuth(name); loadErr == nil && stored != nil && stored.Issuer != "" {
+		if r, meta, err := discoverOAuth(server.URL); err == nil && meta.Issuer != stored.Issuer {
+			logStderr("authorization server for %q changed (issuer %q, was %q); re-authenticating", name, meta.Issuer, stored.Issuer)
+			resource, authMeta = r, meta
+		}
+	}
+
+	if authMeta == nil {
+		// Idempotent: if the server is already reachable with stored
+		// credentials, there's nothing to authenticate. Short-circuits before
+		// the OAuth flow so we don't hand the user a fresh auth URL when we're
+		// already connected. Skipped when the issuer changed above — those
+		// credentials must not be reused.
+		if serverConnected(server) {
+			logStderr("%q is already connected", name)
+			return outputJSON(authOutput{Status: "complete", Server: name})
+		}
+
+		// Step 1: Discover OAuth server
+		logStderr("discovering OAuth server for %s...", server.URL)
+		var err error
+		resource, authMeta, err = discoverOAuth(server.URL)
+		if err != nil {
+			return fmt.Errorf("OAuth discovery failed: %w", err)
+		}
 	}
 
 	authMethod, err := chooseTokenAuthMethod(authMeta.TokenEndpointAuthMethodsSupported)
@@ -281,14 +311,21 @@ Environment:
 		redirectURI = fmt.Sprintf("http://127.0.0.1:%d/callback", port)
 	}
 
-	// Step 3: Get client credentials (dynamic registration or static)
+	// Step 3: Get client credentials (static, CIMD, or dynamic registration)
 	var regClientID, regClientSecret string
 
-	if clientID != "" {
+	switch {
+	case clientID != "":
 		regClientID = clientID
 		regClientSecret = clientSecret
 		logStderr("using static client credentials")
-	} else {
+	case metadataURL != "" && authMeta.ClientIDMetadataDocumentSupported:
+		// CIMD: the metadata document URL is the client_id; a public client
+		// authenticating with PKCE only. No registration round-trip.
+		regClientID = metadataURL
+		authMethod = "none"
+		logStderr("using client ID metadata document as client_id")
+	default:
 		if authMeta.RegistrationEndpoint == "" {
 			if localListener != nil {
 				_ = localListener.Close()
@@ -326,6 +363,7 @@ Environment:
 			ServerName:              name,
 			CreatedAt:               time.Now().Unix(),
 			TokenEndpointAuthMethod: authMethod,
+			Issuer:                  authMeta.Issuer,
 		}
 
 		if err := savePendingAuth(name, pending); err != nil {
@@ -409,7 +447,7 @@ func cmdAuthCallback(args []string) error {
 	}
 
 	// Save tokens
-	auth := tokensFromResponse(tokens, pending.ClientID, pending.ClientSecret, pending.TokenURL, pending.Resource, pending.TokenEndpointAuthMethod)
+	auth := tokensFromResponse(tokens, pending.ClientID, pending.ClientSecret, pending.TokenURL, pending.Resource, pending.TokenEndpointAuthMethod, pending.Issuer)
 
 	if err := saveAuth(pending.ServerName, auth); err != nil {
 		return fmt.Errorf("save auth: %w", err)
@@ -475,7 +513,53 @@ func discoverOAuth(mcpServerURL string) (string, *authServerMetadata, error) {
 		return "", nil, err
 	}
 
+	// Issuer binding: stored credentials are bound to the AS identity. When
+	// the metadata omits issuer, fall back to the URL used for discovery.
+	if asMeta.Issuer == "" {
+		asMeta.Issuer = authServerURL
+	}
+
 	return resource, asMeta, nil
+}
+
+// validateClientMetadataURL enforces the CIMD requirements on the client
+// metadata document URL used as a client_id: https scheme and a non-empty path.
+func validateClientMetadataURL(metadataURL string) error {
+	u, err := url.Parse(metadataURL)
+	if err != nil {
+		return fmt.Errorf("invalid client metadata URL: %w", err)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("client metadata URL requires HTTPS (got %s)", metadataURL)
+	}
+	if u.Path == "" || u.Path == "/" {
+		return fmt.Errorf("client metadata URL requires a non-empty path (got %s)", metadataURL)
+	}
+	return nil
+}
+
+// checkIssuerUnchanged guards reuse of stored client credentials: when the
+// stored tokens are bound to an issuer, re-discover the authorization server
+// and refuse on mismatch (the refresh token and client credentials belong to
+// the old AS). Tokens saved before issuer binding existed (empty issuer) are
+// exempt, as are servers we cannot re-discover — the refresh still only talks
+// to the previously stored token endpoint.
+func checkIssuerUnchanged(name, issuer string) error {
+	if issuer == "" {
+		return nil
+	}
+	server, err := getServerConfig(name)
+	if err != nil {
+		return nil
+	}
+	_, meta, err := discoverOAuth(server.URL)
+	if err != nil {
+		return nil
+	}
+	if meta.Issuer != issuer {
+		return fmt.Errorf("authorization server changed (issuer %q, was %q); re-run `mcp auth %s`", meta.Issuer, issuer, name)
+	}
+	return nil
 }
 
 func fetchAuthServerMetadata(client *http.Client, authServerURL string) (*authServerMetadata, error) {
@@ -540,6 +624,8 @@ func registerClient(meta *authServerMetadata, redirectURI, authMethod string) (*
 		GrantTypes:              []string{"authorization_code", "refresh_token"},
 		ResponseTypes:           []string{"code"},
 		TokenEndpointAuthMethod: authMethod,
+		// The CLI is a native app (loopback/relay redirect, no hosted origin).
+		ApplicationType: "native",
 	}
 
 	data, err := json.Marshal(reqBody)
@@ -662,7 +748,7 @@ func doTokenRequest(tokenURL string, params url.Values, clientID, clientSecret, 
 }
 
 // tokensFromResponse converts a tokenResponse into an AuthTokens struct.
-func tokensFromResponse(resp *tokenResponse, clientID, clientSecret, tokenURL, resource, authMethod string) *AuthTokens {
+func tokensFromResponse(resp *tokenResponse, clientID, clientSecret, tokenURL, resource, authMethod, issuer string) *AuthTokens {
 	auth := &AuthTokens{
 		AccessToken:             resp.AccessToken,
 		RefreshToken:            resp.RefreshToken,
@@ -671,6 +757,7 @@ func tokensFromResponse(resp *tokenResponse, clientID, clientSecret, tokenURL, r
 		TokenURL:                tokenURL,
 		Resource:                resource,
 		TokenEndpointAuthMethod: authMethod,
+		Issuer:                  issuer,
 	}
 	if resp.ExpiresIn > 0 {
 		auth.ExpiresAt = time.Now().Unix() + resp.ExpiresIn
@@ -710,7 +797,7 @@ func refreshOAuthToken(tokens *AuthTokens) (*AuthTokens, error) {
 		return nil, err
 	}
 
-	refreshed := tokensFromResponse(tokenResp, tokens.ClientID, tokens.ClientSecret, tokens.TokenURL, tokens.Resource, tokens.TokenEndpointAuthMethod)
+	refreshed := tokensFromResponse(tokenResp, tokens.ClientID, tokens.ClientSecret, tokens.TokenURL, tokens.Resource, tokens.TokenEndpointAuthMethod, tokens.Issuer)
 
 	// Keep old refresh token if new one not provided
 	if refreshed.RefreshToken == "" {

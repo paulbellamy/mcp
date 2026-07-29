@@ -241,6 +241,14 @@ func getAuthToken(name string) (string, error) {
 	// Check if token needs refresh
 	if tokens.ExpiresAt > 0 && tokens.ExpiresAt-30 < time.Now().Unix() {
 		if tokens.RefreshToken != "" && tokens.TokenURL != "" {
+			// Issuer binding: don't replay the refresh token and client
+			// credentials when the resource now points at a different AS.
+			// Fall through to the stale token; its rejection forces a fresh
+			// `mcp auth` (and re-registration) against the new issuer.
+			if err := checkIssuerUnchanged(name, tokens.Issuer); err != nil {
+				logStderr("warning: token refresh skipped: %v", err)
+				return tokens.AccessToken, nil
+			}
 			refreshed, err := refreshTokenWithLock(name, tokens)
 			if err != nil {
 				logStderr("warning: token refresh failed: %v", err)
