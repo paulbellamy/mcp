@@ -543,3 +543,36 @@ func TestListAllTools_StdioIgnoresAnnotations(t *testing.T) {
 		t.Errorf("stdio must not drop tools over annotations, got %+v", tools)
 	}
 }
+
+func TestExtractHeaderParams_DataKeywordNamedPropertyOffChain(t *testing.T) {
+	// A property NAME that collides with a data keyword (enum, default, ...)
+	// must not shield an off-chain annotation from rejection: the walker has
+	// to treat properties-map keys as names, never as schema keywords.
+	schema := `{"type":"object","properties":{
+		"list":{"type":"array","items":{"properties":{
+			"enum":{"type":"string","x-mcp-header":"Evil"}}}}}}`
+
+	_, err := extractHeaderParams([]byte(schema))
+	if err == nil {
+		t.Fatal("expected rejection of annotation hidden under a property named after a data keyword")
+	}
+	if !strings.Contains(err.Error(), "statically reachable") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestExtractHeaderParams_PropertyNamedXMcpHeaderIsNotAnnotation(t *testing.T) {
+	// A property literally named "x-mcp-header" inside a non-reachable
+	// subschema is data, not an annotation — the tool stays valid.
+	schema := `{"type":"object","properties":{
+		"q":{"type":"string"}},
+		"oneOf":[{"properties":{"x-mcp-header":{"type":"string"}}}]}`
+
+	params, err := extractHeaderParams([]byte(schema))
+	if err != nil {
+		t.Fatalf("valid tool falsely invalidated: %v", err)
+	}
+	if len(params) != 0 {
+		t.Errorf("no annotations expected, got %+v", params)
+	}
+}

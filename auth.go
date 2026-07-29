@@ -276,9 +276,19 @@ Environment:
 		}
 	}
 
-	authMethod, err := chooseTokenAuthMethod(authMeta.TokenEndpointAuthMethodsSupported)
-	if err != nil {
-		return err
+	// The CIMD path is a public client (PKCE only, authMethod "none") and
+	// needs no negotiated token auth method, so an AS advertising only
+	// methods we can't do (e.g. private_key_jwt) must not block it.
+	useCIMD := clientID == "" && metadataURL != "" && authMeta.ClientIDMetadataDocumentSupported
+	var authMethod string
+	if useCIMD {
+		authMethod = "none"
+	} else {
+		var err error
+		authMethod, err = chooseTokenAuthMethod(authMeta.TokenEndpointAuthMethodsSupported)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Step 2: Compute redirect URI and PKCE up front
@@ -319,11 +329,10 @@ Environment:
 		regClientID = clientID
 		regClientSecret = clientSecret
 		logStderr("using static client credentials")
-	case metadataURL != "" && authMeta.ClientIDMetadataDocumentSupported:
+	case useCIMD:
 		// CIMD: the metadata document URL is the client_id; a public client
 		// authenticating with PKCE only. No registration round-trip.
 		regClientID = metadataURL
-		authMethod = "none"
 		logStderr("using client ID metadata document as client_id")
 	default:
 		if authMeta.RegistrationEndpoint == "" {

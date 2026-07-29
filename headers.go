@@ -119,7 +119,13 @@ func walkHeaderSchema(node map[string]any, path []string, onChain bool, seen map
 		if key == "x-mcp-header" || headerDataKeywords[key] {
 			continue
 		}
-		if key == "properties" && onChain {
+		// A properties map's keys are property NAMES, never schema keywords,
+		// so its children must always be walked as schema nodes — on-chain
+		// children extend the path, off-chain children stay unreachable.
+		// Passing the map itself to walkHeaderSchema would misread property
+		// names like "enum" (silently skipped) or "x-mcp-header" (falsely
+		// treated as an annotation).
+		if key == "properties" {
 			props, ok := val.(map[string]any)
 			if !ok {
 				continue
@@ -129,10 +135,13 @@ func walkHeaderSchema(node map[string]any, path []string, onChain bool, seen map
 				if !ok {
 					continue
 				}
-				// Copy the path: append on a shared backing array would
-				// alias sibling walks.
-				childPath := append(append([]string(nil), path...), propName)
-				if err := walkHeaderSchema(child, childPath, true, seen, out); err != nil {
+				var childPath []string
+				if onChain {
+					// Copy the path: append on a shared backing array would
+					// alias sibling walks.
+					childPath = append(append([]string(nil), path...), propName)
+				}
+				if err := walkHeaderSchema(child, childPath, onChain, seen, out); err != nil {
 					return err
 				}
 			}

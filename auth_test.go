@@ -1408,6 +1408,12 @@ type authTestAS struct {
 // newAuthTestAS stands up a mock authorization server. cimd controls whether
 // the metadata advertises client_id_metadata_document_supported.
 func newAuthTestAS(t *testing.T, cimd bool) *authTestAS {
+	return newAuthTestASMethods(t, cimd, []string{"client_secret_basic", "none"})
+}
+
+// newAuthTestASMethods is newAuthTestAS with a custom
+// token_endpoint_auth_methods_supported list.
+func newAuthTestASMethods(t *testing.T, cimd bool, methods []string) *authTestAS {
 	t.Helper()
 	as := &authTestAS{}
 	as.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1419,7 +1425,7 @@ func newAuthTestAS(t *testing.T, cimd bool) *authTestAS {
 				TokenEndpoint:                     as.srv.URL + "/token",
 				RegistrationEndpoint:              as.srv.URL + "/register",
 				CodeChallengeMethodsSupported:     []string{"S256"},
-				TokenEndpointAuthMethodsSupported: []string{"client_secret_basic", "none"},
+				TokenEndpointAuthMethodsSupported: methods,
 				ClientIDMetadataDocumentSupported: cimd,
 			})
 		case "/register":
@@ -1917,5 +1923,48 @@ func TestCmdAuth_EmptyStoredIssuer_LegacyTolerance(t *testing.T) {
 	}
 	if as.registerHit {
 		t.Error("legacy tokens must not trigger re-registration")
+	}
+}
+
+func TestCmdAuth_CIMD_WorksWithUnsupportedTokenAuthMethods(t *testing.T) {
+	// CIMD is a public client (PKCE, auth method "none") and must not be
+	// blocked by an AS whose token_endpoint_auth_methods_supported lists
+	// only methods the CLI cannot do (e.g. private_key_jwt).
+	setupTestConfigDir(t)
+
+	const metadataURL = "https://client.example.com/mcp-client.json"
+	as := newAuthTestASMethods(t, true, []string{"private_key_jwt"})
+	resourceSrv := newDiscoveryResourceServer(t, as.srv.URL)
+
+	if err := addServerConfig(ServerConfig{
+		Name:      "test",
+		Transport: "streamable-http",
+		URL:       resourceSrv.URL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := runCmdAuthRelay(t,
+		[]string{"test", "--callback-url", "http://localhost:9999/cb"},
+		map[string]string{"MCP_CLIENT_METADATA_URL": metadataURL},
+	)
+
+	parsed, err := url.Parse(out.AuthURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.Query().Get("client_id"); got != metadataURL {
+		t.Errorf("authorize client_id: got %q, want %q", got, metadataURL)
+	}
+	if as.registerHit {
+		t.Error("CIMD path must not hit the registration endpoint")
+	}
+
+	pending, _, err := findPendingAuthByNonce(out.Nonce)
+	if err != nil || pending == nil {
+		t.Fatalf("pending auth: %v, %v", pending, err)
+	}
+	if pending.TokenEndpointAuthMethod != "none" {
+		t.Errorf("CIMD auth method must be none, got %q", pending.TokenEndpointAuthMethod)
 	}
 }
