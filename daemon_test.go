@@ -746,3 +746,59 @@ func TestDaemon_HandleClient_ModernChildGetsMeta(t *testing.T) {
 		t.Errorf("forwarded request missing modern _meta: %v", params.Meta)
 	}
 }
+
+func TestDaemon_HandleClient_RemapsRequestIDs(t *testing.T) {
+	// The daemon must not forward client-chosen request IDs verbatim: they
+	// can collide with IDs the daemon already used against the child (a
+	// timed-out negotiation probe), mis-delivering late responses. The
+	// child must see a daemon-fresh ID; the client must get its own back.
+	var childSawID int
+	mock := &mockTransport{
+		sendFunc: func(req jsonrpcRequest) (jsonrpcResponse, error) {
+			childSawID = req.ID
+			return jsonrpcResponse{
+				JSONRPC: "2.0",
+				ID:      json.RawMessage(fmt.Sprintf("%d", req.ID)),
+				Result:  json.RawMessage(`{"ok":true}`),
+			}, nil
+		},
+	}
+
+	d := &daemon{
+		servers:      make(map[string]*managedServer),
+		lastActivity: time.Now(),
+		done:         make(chan struct{}),
+	}
+	ms := &managedServer{config: ServerConfig{Name: "test"}, transport: mock}
+
+	server, client := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		d.handleClient(server, ms)
+		close(done)
+	}()
+
+	// A client ID likely to collide with the daemon's own early counter.
+	req := jsonrpcRequest{JSONRPC: "2.0", ID: 1, Method: "tools/list"}
+	data, _ := json.Marshal(req)
+	_, _ = client.Write(append(data, '\n'))
+
+	reader := bufio.NewReader(client)
+	line, err := reader.ReadBytes('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = client.Close()
+	<-done
+
+	var resp jsonrpcResponse
+	if err := json.Unmarshal(line, &resp); err != nil {
+		t.Fatal(err)
+	}
+	if string(resp.ID) != "1" {
+		t.Errorf("client got ID %s back, want its original 1", resp.ID)
+	}
+	if childSawID == 1 {
+		t.Error("child saw the client's raw ID; expected a daemon-fresh remapped ID")
+	}
+}

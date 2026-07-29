@@ -347,3 +347,77 @@ func TestMcpPing_ModernSessionUsesDiscover(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestNegotiateProtocol_InBandModernErrorsDoNotFallBack(t *testing.T) {
+	// Reserved 2026-07-28 codes identify a modern server regardless of
+	// delivery channel (in-band JSON-RPC error vs HTTP 4xx body).
+	for _, code := range []int{codeHeaderMismatch, codeMissingRequiredClientCapability} {
+		mock, methods := negotiationMock(t, func(req jsonrpcRequest) (jsonrpcResponse, error) {
+			return rpcError(req, code, "modern rejection", ""), nil
+		})
+
+		_, err := negotiateProtocol(mock)
+		if err == nil {
+			t.Fatalf("code %d: expected error", code)
+		}
+		for _, m := range *methods {
+			if m == "initialize" {
+				t.Errorf("code %d: must not fall back to initialize", code)
+			}
+		}
+	}
+}
+
+func TestProtocolSession_NonObjectParamsForwardedUnchanged(t *testing.T) {
+	// Daemon-forwarded requests can carry arbitrary params; non-object
+	// params must not be silently replaced by a bare _meta object.
+	var seen any
+	mock := &mockTransport{
+		sendFunc: func(req jsonrpcRequest) (jsonrpcResponse, error) {
+			seen = req.Params
+			return rpcResult(t, req, map[string]any{}), nil
+		},
+	}
+	session := newProtocolSession(mock, protocolVersionModern)
+
+	if _, err := session.Send(jsonrpcRequest{
+		JSONRPC: "2.0",
+		ID:      nextID(),
+		Method:  "tools/call",
+		Params:  []string{"not", "an", "object"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	arr, ok := seen.([]string)
+	if !ok || len(arr) != 3 {
+		t.Errorf("non-object params were altered: %#v", seen)
+	}
+}
+
+func TestMcpPing_DaemonHiddenModernChild(t *testing.T) {
+	// Through the daemon the client cannot know the child's era: a modern
+	// child rejects ping with -32601 and the client must retry with
+	// server/discover.
+	var methods []string
+	mock := &mockTransport{
+		sendFunc: func(req jsonrpcRequest) (jsonrpcResponse, error) {
+			methods = append(methods, req.Method)
+			if req.Method == "ping" {
+				return rpcError(req, codeMethodNotFound, "method not found", ""), nil
+			}
+			return rpcResult(t, req, map[string]any{
+				"resultType":        "complete",
+				"supportedVersions": []string{protocolVersionModern},
+			}), nil
+		},
+	}
+
+	if err := mcpPing(mock); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"ping", "server/discover"}
+	if fmt.Sprint(methods) != fmt.Sprint(want) {
+		t.Errorf("methods = %v, want %v", methods, want)
+	}
+}

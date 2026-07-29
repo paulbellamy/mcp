@@ -252,11 +252,16 @@ func (d *daemon) handleClient(conn net.Conn, ms *managedServer) {
 			continue
 		}
 
-		// Request — forward and return response
+		// Request — forward and return response. The client's request ID is
+		// remapped to a daemon-fresh one so it can never collide with IDs
+		// the daemon itself used against the child (e.g. a timed-out
+		// negotiation probe whose late response would otherwise be
+		// mis-delivered to a forwarded request reusing that ID).
 		var req jsonrpcRequest
 		if err := json.Unmarshal(line, &req); err != nil {
 			continue
 		}
+		req.ID = nextID()
 
 		resp, err := ms.transport.Send(req)
 		if err != nil {
@@ -275,6 +280,8 @@ func (d *daemon) handleClient(conn net.Conn, ms *managedServer) {
 			}
 			respData, _ = json.Marshal(errResp)
 		} else {
+			// Restore the client's original ID on the way back.
+			resp.ID = peek.ID
 			respData, _ = json.Marshal(resp)
 		}
 

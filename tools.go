@@ -129,6 +129,8 @@ func listAllTools(transport Transport, serverName string) ([]toolOutput, int64, 
 
 // mcpPing verifies server liveness. Modern servers dropped ping from the
 // protocol, so a stateless session probes with server/discover instead.
+// Daemon connections hide the child's era, so a ping rejected as an unknown
+// method is retried as server/discover before reporting failure.
 func mcpPing(transport Transport) error {
 	method := "ping"
 	if _, ok := transport.(*protocolSession); ok {
@@ -141,6 +143,16 @@ func mcpPing(transport Transport) error {
 	})
 	if err != nil {
 		return fmt.Errorf("ping: %w", err)
+	}
+	if resp.Error != nil && resp.Error.Code == codeMethodNotFound && method == "ping" {
+		resp, err = transport.Send(jsonrpcRequest{
+			JSONRPC: jsonrpcVersion,
+			ID:      nextID(),
+			Method:  "server/discover",
+		})
+		if err != nil {
+			return fmt.Errorf("ping: %w", err)
+		}
 	}
 	if resp.Error != nil {
 		return fmt.Errorf("ping: %s", resp.Error.Message)

@@ -30,8 +30,14 @@ func newProtocolSession(t Transport, version string) *protocolSession {
 func (s *protocolSession) decorate(req jsonrpcRequest) jsonrpcRequest {
 	params := make(map[string]any)
 	if req.Params != nil {
-		if data, err := json.Marshal(req.Params); err == nil {
-			_ = json.Unmarshal(data, &params)
+		data, err := json.Marshal(req.Params)
+		if err != nil {
+			return req
+		}
+		if err := json.Unmarshal(data, &params); err != nil {
+			// Non-object params are not valid MCP; forward unchanged and
+			// let the server reject them rather than silently dropping them.
+			return req
 		}
 	}
 	meta, _ := params["_meta"].(map[string]any)
@@ -117,7 +123,11 @@ func negotiateProtocol(transport Transport) (Transport, error) {
 	}
 
 	if resp.Error != nil {
-		if resp.Error.Code == codeUnsupportedProtocolVersion {
+		// The reserved 2026-07-28 error codes identify a modern server no
+		// matter how they are delivered — surface them instead of falling
+		// back (matching the HTTP 4xx body path above).
+		switch resp.Error.Code {
+		case codeHeaderMismatch, codeMissingRequiredClientCapability, codeUnsupportedProtocolVersion:
 			return nil, modernNegotiationError(resp.Error)
 		}
 		return legacyHandshake(transport)
