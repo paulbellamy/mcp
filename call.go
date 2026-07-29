@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -188,8 +189,29 @@ func cmdCall(args []string) error {
 		transport.SetTimeout(timeout)
 	}
 
+	// Mirror x-mcp-header-annotated arguments into Mcp-Param-* headers
+	// (modern streamable HTTP only; requires a cached schema).
+	var extraHeaders map[string]string
+	if !adhoc && isModernHTTP(transport) {
+		extraHeaders = computeExtraHeaders(serverName, toolName, params)
+	}
+
 	// Call tool
-	output, err := executeToolCall(transport, toolName, params, stream)
+	output, err := executeToolCall(transport, toolName, params, stream, extraHeaders)
+	if err != nil && !adhoc && isHeaderMismatch(err) {
+		// HeaderMismatch (-32020): the server's tool definition no longer
+		// matches our cached schema. Refresh the tool list, recompute the
+		// headers, and retry exactly once.
+		logStderr("warning: server reported a header mismatch; refreshing tool schema and retrying")
+		if _, refreshErr := getToolsForServer(server, true); refreshErr != nil {
+			logStderr("warning: tool list refresh failed: %v", refreshErr)
+			return err
+		}
+		if isModernHTTP(transport) {
+			extraHeaders = computeExtraHeaders(serverName, toolName, params)
+		}
+		output, err = executeToolCall(transport, toolName, params, stream, extraHeaders)
+	}
 	if err != nil {
 		return err
 	}
@@ -405,7 +427,9 @@ func showToolHelp(serverName, toolName string) error {
 // the 2026-07-28 MRTR pattern a server may answer with an input_required
 // result; when it carries only opaque requestState the call is retried (as a
 // fresh request echoing the state) until it completes or the retry cap hits.
-func executeToolCall(transport Transport, toolName string, params map[string]any, stream bool) (callOutput, error) {
+// extraHeaders carries the Mcp-Param-* custom parameter headers (nil when
+// none apply); they ride on every attempt, including MRTR retries.
+func executeToolCall(transport Transport, toolName string, params map[string]any, stream bool, extraHeaders map[string]string) (callOutput, error) {
 	// Always send an arguments object, even when empty. A nil map would
 	// marshal to null; an empty map marshals to {} which servers expect.
 	if params == nil {
@@ -419,10 +443,11 @@ func executeToolCall(transport Transport, toolName string, params map[string]any
 
 	for attempt := 0; attempt < maxInputRequiredRetries; attempt++ {
 		req := jsonrpcRequest{
-			JSONRPC: jsonrpcVersion,
-			ID:      nextID(),
-			Method:  "tools/call",
-			Params:  callParams,
+			JSONRPC:      jsonrpcVersion,
+			ID:           nextID(),
+			Method:       "tools/call",
+			Params:       callParams,
+			ExtraHeaders: extraHeaders,
 		}
 
 		var resp jsonrpcResponse
@@ -441,6 +466,12 @@ func executeToolCall(transport Transport, toolName string, params map[string]any
 			return callOutput{}, fmt.Errorf("call tool: %w", err)
 		}
 		if resp.Error != nil {
+			// Surface HeaderMismatch as a Go error so cmdCall can refresh
+			// the cached schema and retry; every other JSON-RPC error
+			// renders as tool output.
+			if resp.Error.Code == codeHeaderMismatch {
+				return callOutput{}, fmt.Errorf("call tool: %w", resp.Error)
+			}
 			return callOutput{Content: resp.Error.Message, IsError: true}, nil
 		}
 
@@ -468,4 +499,42 @@ func executeToolCall(transport Transport, toolName string, params map[string]any
 	}
 
 	return callOutput{}, fmt.Errorf("call tool: server still required input after %d attempts", maxInputRequiredRetries)
+}
+
+// isHeaderMismatch reports whether err carries the spec's HeaderMismatch
+// error (-32020), either as a raw JSON-RPC error or inside an HTTP 400 body.
+func isHeaderMismatch(err error) bool {
+	var rpcErr *jsonrpcError
+	if errors.As(err, &rpcErr) {
+		return rpcErr.Code == codeHeaderMismatch
+	}
+	var statusErr *httpStatusError
+	if errors.As(err, &statusErr) && statusErr.status == http.StatusBadRequest {
+		modernErr := parseModernError(statusErr.body)
+		return modernErr != nil && modernErr.Code == codeHeaderMismatch
+	}
+	return false
+}
+
+// computeExtraHeaders derives the Mcp-Param-* headers for a call from the
+// tool's cached inputSchema. No cached schema, or an invalid one (possible
+// with a cache written before annotation validation existed), yields no
+// headers — the server validates the arguments against the body regardless.
+func computeExtraHeaders(serverName, toolName string, args map[string]any) map[string]string {
+	cached, err := loadCachedTools(serverName)
+	if err != nil || cached == nil {
+		return nil
+	}
+	for _, t := range cached {
+		if t.Name != toolName {
+			continue
+		}
+		headerParams, err := extractHeaderParams(t.InputSchema)
+		if err != nil {
+			logStderr("warning: tool %q has an invalid x-mcp-header annotation: %v", toolName, err)
+			return nil
+		}
+		return headerValuesForCall(headerParams, args)
+	}
+	return nil
 }

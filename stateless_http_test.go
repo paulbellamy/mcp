@@ -162,7 +162,7 @@ func TestModernHTTP_EndToEnd(t *testing.T) {
 		t.Errorf("ttlMs = %d, want 60000", ttlMs)
 	}
 
-	out, err := executeToolCall(transport, "echo", map[string]any{"msg": "hi"}, false)
+	out, err := executeToolCall(transport, "echo", map[string]any{"msg": "hi"}, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +285,7 @@ func TestLegacyHTTP_FallbackOnStatus(t *testing.T) {
 				t.Error("client did not fall back to initialize")
 			}
 
-			out, err := executeToolCall(transport, "echo", nil, false)
+			out, err := executeToolCall(transport, "echo", nil, false, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -417,7 +417,7 @@ func TestModernHTTP_NonASCIIToolName(t *testing.T) {
 	}
 	defer func() { _ = transport.Close() }()
 
-	out, err := executeToolCall(transport, "検索", nil, false)
+	out, err := executeToolCall(transport, "検索", nil, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

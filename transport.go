@@ -356,6 +356,10 @@ func (t *HTTPTransport) sendWithContext(ctx context.Context, req jsonrpcRequest,
 		if name, ok := mcpNameForRequest(req); ok {
 			httpReq.Header.Set("Mcp-Name", encodeHeaderValue(name))
 		}
+		// Custom parameter headers (Mcp-Param-*), already value-encoded.
+		for k, v := range req.ExtraHeaders {
+			httpReq.Header.Set(k, v)
+		}
 	} else if t.sessionID != "" {
 		httpReq.Header.Set("Mcp-Session-Id", t.sessionID)
 	}

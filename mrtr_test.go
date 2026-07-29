@@ -20,7 +20,7 @@ func TestExecuteToolCall_ResultTypeComplete(t *testing.T) {
 		},
 	}
 
-	out, err := executeToolCall(transport, "echo", nil, false)
+	out, err := executeToolCall(transport, "echo", nil, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestExecuteToolCall_RequestStateRetry(t *testing.T) {
 		},
 	}
 
-	out, err := executeToolCall(transport, "echo", nil, false)
+	out, err := executeToolCall(transport, "echo", nil, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestExecuteToolCall_InputRequestsUnsupported(t *testing.T) {
 		},
 	}
 
-	out, err := executeToolCall(transport, "login", nil, false)
+	out, err := executeToolCall(transport, "login", nil, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestExecuteToolCall_InputRequiredWithoutStateOrRequests(t *testing.T) {
 		},
 	}
 
-	_, err := executeToolCall(transport, "echo", nil, false)
+	_, err := executeToolCall(transport, "echo", nil, false, nil)
 	if err == nil {
 		t.Fatal("expected error for input_required with neither inputRequests nor requestState")
 	}
@@ -138,7 +138,7 @@ func TestExecuteToolCall_InputRequiredLoopBounded(t *testing.T) {
 		},
 	}
 
-	_, err := executeToolCall(transport, "echo", nil, false)
+	_, err := executeToolCall(transport, "echo", nil, false, nil)
 	if err == nil {
 		t.Fatal("expected error when the server never completes")
 	}
@@ -154,7 +154,7 @@ func TestExecuteToolCall_UnknownResultType(t *testing.T) {
 		},
 	}
 
-	_, err := executeToolCall(transport, "echo", nil, false)
+	_, err := executeToolCall(transport, "echo", nil, false, nil)
 	if err == nil {
 		t.Fatal("expected error for unrecognized resultType")
 	}

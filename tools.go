@@ -67,13 +67,27 @@ func discoverTools(server *ServerConfig, authToken string) ([]toolOutput, int64,
 	return listAllTools(transport, server.Name)
 }
 
+// isModernHTTP reports whether the negotiated transport is a stateless
+// (2026-07-28) session over streamable HTTP — the only mode in which
+// x-mcp-header annotations apply. Stdio and daemon connections ignore them.
+func isModernHTTP(transport Transport) bool {
+	session, ok := transport.(*protocolSession)
+	if !ok {
+		return false
+	}
+	_, ok = session.transport.(*HTTPTransport)
+	return ok
+}
+
 // listAllTools fetches all tools from a connected transport, handling
 // pagination. The returned ttlMs is the smallest freshness hint seen across
-// pages (0 when the server provided none).
+// pages (0 when the server provided none). On modern streamable HTTP, tools
+// whose x-mcp-header annotations are invalid must be excluded per spec.
 func listAllTools(transport Transport, serverName string) ([]toolOutput, int64, error) {
 	var allTools []toolOutput
 	var cursor string
 	var ttlMs int64
+	modernHTTP := isModernHTTP(transport)
 	const maxPages = 100
 
 	for page := 0; page < maxPages; page++ {
@@ -106,6 +120,12 @@ func listAllTools(transport Transport, serverName string) ([]toolOutput, int64, 
 		}
 
 		for _, t := range result.Tools {
+			if modernHTTP {
+				if _, err := extractHeaderParams(t.InputSchema); err != nil {
+					logStderr("warning: excluding tool %q: invalid x-mcp-header annotation: %v", t.Name, err)
+					continue
+				}
+			}
 			allTools = append(allTools, toolOutput{
 				Server:      serverName,
 				Name:        t.Name,

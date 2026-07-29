@@ -20,6 +20,10 @@ type jsonrpcRequest struct {
 	ID      int    `json:"id"`
 	Method  string `json:"method"`
 	Params  any    `json:"params,omitempty"`
+	// ExtraHeaders carries per-request HTTP headers (the Mcp-Param-* custom
+	// parameter headers) for modern streamable HTTP. Never serialized into
+	// the JSON-RPC body; non-HTTP transports ignore it.
+	ExtraHeaders map[string]string `json:"-"`
 }
 
 type jsonrpcNotification struct {
