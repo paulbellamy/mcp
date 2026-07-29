@@ -45,6 +45,8 @@ func main() {
 		err = cmdAuth(cmdArgs)
 	case "ping":
 		err = cmdPing(cmdArgs)
+	case "listen":
+		err = cmdListen(cmdArgs)
 	case "daemon":
 		err = cmdDaemon(cmdArgs)
 	case "enable":
@@ -89,6 +91,7 @@ Commands:
   call <server|url> <tool> ...   Call a tool
   auth <name> [flags]            Authenticate with a server (idempotent; no-op if already connected)
   ping <server|url>               Ping a server (liveness check)
+  listen <server|url> [flags]    Stream change notifications (subscriptions/listen)
   daemon                         Keep stdio servers warm (foreground)
   daemon stop                    Stop the daemon
   help                           Show this help
@@ -117,6 +120,12 @@ Resources flags:
 Read flags:
   --max-output N                 Truncate output to N chars (default 30000)
   --timeout <duration>           Per-call timeout (e.g. 30s, 5m; 0 = no limit)
+
+Listen flags:
+  --tools                        Subscribe to tools list changes
+  --prompts                      Subscribe to prompts list changes
+  --resources                    Subscribe to resources list changes
+  --resource <uri>               Subscribe to updates of one resource (repeatable)
 
 Auth flags:
   --callback-url <url>           Use relay mode
@@ -348,4 +357,3 @@ func fatal(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "error: "+format+"\n", args...)
 	os.Exit(1)
 }
-

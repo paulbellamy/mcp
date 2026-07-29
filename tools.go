@@ -14,7 +14,7 @@ import (
 // 2026-07-28, or the legacy initialize handshake), and returns a
 // ready-to-use transport.
 func mcpConnect(server *ServerConfig, authToken string) (Transport, error) {
-	return mcpConnectTimeout(server, authToken, 0)
+	return mcpConnectOpts(server, authToken, 0, true)
 }
 
 // mcpConnectTimeout is like mcpConnect but bounds the negotiation with the
@@ -22,14 +22,28 @@ func mcpConnect(server *ServerConfig, authToken string) (Transport, error) {
 // passes a short timeout so a reachable-but-unresponsive server can't stall
 // the command for the full default send timeout.
 func mcpConnectTimeout(server *ServerConfig, authToken string, timeout time.Duration) (Transport, error) {
+	return mcpConnectOpts(server, authToken, timeout, true)
+}
+
+// mcpConnectDirect is mcpConnect without the daemon fast-path: the connection
+// always goes to the server itself. `mcp listen` requires this — the daemon
+// serializes one client per stdio server, so a long-lived listen stream held
+// through the daemon socket would starve every other client.
+func mcpConnectDirect(server *ServerConfig, authToken string) (Transport, error) {
+	return mcpConnectOpts(server, authToken, 0, false)
+}
+
+func mcpConnectOpts(server *ServerConfig, authToken string, timeout time.Duration, useDaemon bool) (Transport, error) {
 	var transport Transport
 	var err error
 
 	switch server.Transport {
 	case "stdio":
 		// Try daemon first — the daemon already negotiated with the server
-		if t, err := NewDaemonTransport(server.Name); err == nil {
-			return t, nil
+		if useDaemon {
+			if t, err := NewDaemonTransport(server.Name); err == nil {
+				return t, nil
+			}
 		}
 		transport, err = NewStdioTransport(server.Command, server.Args)
 	case "streamable-http":

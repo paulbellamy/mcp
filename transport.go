@@ -84,6 +84,10 @@ type StdioTransport struct {
 	pending     map[string]chan stdioResult
 	closed      bool
 	callTimeout time.Duration // 0 = no timeout
+	// notifyHandler, when non-nil, receives each notification line (raw
+	// JSON) read by readLoop. SendStreaming registers it for the duration of
+	// a streaming call; otherwise notifications are dropped.
+	notifyHandler func(line []byte)
 }
 
 func NewStdioTransport(command string, args []string) (*StdioTransport, error) {
@@ -146,8 +150,16 @@ func (t *StdioTransport) readLoop() {
 			continue
 		}
 
-		// Notification — no id, skip
+		// Notification — no id; feed the registered sink, if any. The
+		// handler runs outside the lock because it may call back into the
+		// transport (e.g. Notify).
 		if resp.ID == nil {
+			t.mu.Lock()
+			handler := t.notifyHandler
+			t.mu.Unlock()
+			if handler != nil {
+				handler(line)
+			}
 			continue
 		}
 
@@ -220,8 +232,24 @@ func (t *StdioTransport) SetTimeout(d time.Duration) {
 	t.mu.Unlock()
 }
 
+// SendStreaming registers onEvent as the notification sink for the duration
+// of the call, so a long-lived request (subscriptions/listen) receives the
+// notifications interleaved before its final response — readLoop drops them
+// otherwise. With no onEvent it is a plain Send.
 func (t *StdioTransport) SendStreaming(req jsonrpcRequest, onEvent func(streamEvent)) (jsonrpcResponse, error) {
-	// Stdio doesn't have SSE — just do a regular send
+	if onEvent == nil {
+		return t.Send(req)
+	}
+	t.mu.Lock()
+	t.notifyHandler = func(line []byte) {
+		onEvent(streamEvent{Type: "progress", Data: string(line)})
+	}
+	t.mu.Unlock()
+	defer func() {
+		t.mu.Lock()
+		t.notifyHandler = nil
+		t.mu.Unlock()
+	}()
 	return t.Send(req)
 }
 

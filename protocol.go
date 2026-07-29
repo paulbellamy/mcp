@@ -69,6 +69,30 @@ const (
 	metaClientCapabilities = "io.modelcontextprotocol/clientCapabilities"
 )
 
+// Subscriptions pattern (2026-07-28): subscriptions/listen is a long-lived
+// request whose response stream carries opted-in change notifications. It
+// replaces the removed HTTP GET stream.
+const (
+	methodSubscriptionsListen = "subscriptions/listen"
+	// methodSubscriptionAcknowledged is the stream notification confirming
+	// which change notifications the server accepted for a subscription.
+	methodSubscriptionAcknowledged = "notifications/subscriptions/acknowledged"
+	// metaSubscriptionID is the _meta key correlating each stream
+	// notification with the listen request id that subscribed to it.
+	metaSubscriptionID = "io.modelcontextprotocol/subscriptionId"
+)
+
+type subscriptionsListenParams struct {
+	Notifications subscriptionNotifications `json:"notifications"`
+}
+
+type subscriptionNotifications struct {
+	ToolsListChanged      bool     `json:"toolsListChanged,omitempty"`
+	PromptsListChanged    bool     `json:"promptsListChanged,omitempty"`
+	ResourcesListChanged  bool     `json:"resourcesListChanged,omitempty"`
+	ResourceSubscriptions []string `json:"resourceSubscriptions,omitempty"`
+}
+
 type initializeParams struct {
 	ProtocolVersion string             `json:"protocolVersion"`
 	Capabilities    clientCapabilities `json:"capabilities"`
@@ -270,6 +294,15 @@ type readContent struct {
 type streamEvent struct {
 	Type string `json:"type"` // "progress"
 	Data string `json:"data,omitempty"`
+}
+
+// listenOutput is one JSON line printed by `mcp listen`: the server's
+// acknowledgment, a change notification, or the graceful close marker.
+type listenOutput struct {
+	Type          string          `json:"type"` // "acknowledged", "notification", "closed"
+	Notifications json.RawMessage `json:"notifications,omitempty"`
+	Method        string          `json:"method,omitempty"`
+	Params        json.RawMessage `json:"params,omitempty"`
 }
 
 type authOutput struct {
