@@ -441,29 +441,55 @@ Flags:
 }
 
 func readResource(transport Transport, uri string) (readOutput, error) {
-	resp, err := transport.Send(jsonrpcRequest{
-		JSONRPC: jsonrpcVersion,
-		ID:      nextID(),
-		Method:  "resources/read",
-		Params:  resourceReadParams{URI: uri},
-	})
-	if err != nil {
-		return readOutput{}, fmt.Errorf("read resource: %w", err)
-	}
-	if resp.Error != nil {
-		return readOutput{}, fmt.Errorf("read resource: %s", resp.Error.Message)
+	params := resourceReadParams{URI: uri}
+
+	for attempt := 0; attempt < maxInputRequiredRetries; attempt++ {
+		resp, err := transport.Send(jsonrpcRequest{
+			JSONRPC: jsonrpcVersion,
+			ID:      nextID(),
+			Method:  "resources/read",
+			Params:  params,
+		})
+		if err != nil {
+			return readOutput{}, fmt.Errorf("read resource: %w", err)
+		}
+		if resp.Error != nil {
+			return readOutput{}, fmt.Errorf("read resource: %s", resp.Error.Message)
+		}
+
+		var result resourceReadResult
+		if err := json.Unmarshal(resp.Result, &result); err != nil {
+			return readOutput{}, fmt.Errorf("unmarshal resource contents: %w", err)
+		}
+
+		switch result.ResultType {
+		// Absent means "complete" for servers on earlier protocol revisions.
+		case "", resultTypeComplete:
+			out := readOutput{Contents: make([]readContent, 0, len(result.Contents))}
+			for _, c := range result.Contents {
+				out.Contents = append(out.Contents, readContent{
+					URI:      c.URI,
+					MimeType: c.MimeType,
+					Text:     c.Text,
+					Blob:     c.Blob,
+				})
+			}
+			return out, nil
+		case resultTypeInputRequired:
+			if len(result.InputRequests) > 0 {
+				return readOutput{}, fmt.Errorf("read resource: %s", inputRequiredError(result.InputRequests).Content)
+			}
+			if result.RequestState == "" {
+				return readOutput{}, fmt.Errorf("read resource: input_required result carries neither inputRequests nor requestState")
+			}
+			// Retry the original request echoing the opaque state verbatim.
+			params.RequestState = result.RequestState
+		default:
+			return readOutput{}, fmt.Errorf("read resource: unsupported result type %q", result.ResultType)
+		}
 	}
 
-	var result resourceReadResult
-	if err := json.Unmarshal(resp.Result, &result); err != nil {
-		return readOutput{}, fmt.Errorf("unmarshal resource contents: %w", err)
-	}
-
-	out := readOutput{Contents: make([]readContent, 0, len(result.Contents))}
-	for _, c := range result.Contents {
-		out.Contents = append(out.Contents, readContent(c))
-	}
-	return out, nil
+	return readOutput{}, fmt.Errorf("read resource: server still required input after %d attempts", maxInputRequiredRetries)
 }
 
 func truncateReadOutput(out *readOutput, maxOutput int, serverName, uri string) {

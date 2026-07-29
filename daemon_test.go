@@ -693,3 +693,56 @@ func TestMcpConnect_FallbackWithoutDaemon(t *testing.T) {
 		t.Fatal("expected error when daemon unavailable and command doesn't exist")
 	}
 }
+
+func TestDaemon_HandleClient_ModernChildGetsMeta(t *testing.T) {
+	// A modern (stateless) child behind the daemon must receive the
+	// per-request _meta on requests forwarded from CLI clients.
+	var seenParams any
+	mock := &mockTransport{
+		sendFunc: func(req jsonrpcRequest) (jsonrpcResponse, error) {
+			seenParams = req.Params
+			return jsonrpcResponse{
+				JSONRPC: "2.0",
+				ID:      json.RawMessage(fmt.Sprintf("%d", req.ID)),
+				Result:  json.RawMessage(`{"resultType":"complete","tools":[]}`),
+			}, nil
+		},
+	}
+
+	d := &daemon{
+		servers:      make(map[string]*managedServer),
+		lastActivity: time.Now(),
+		done:         make(chan struct{}),
+	}
+	ms := &managedServer{
+		config:    ServerConfig{Name: "test"},
+		transport: newProtocolSession(mock, protocolVersionModern),
+	}
+
+	server, client := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		d.handleClient(server, ms)
+		close(done)
+	}()
+
+	req := jsonrpcRequest{JSONRPC: "2.0", ID: 1, Method: "tools/list"}
+	data, _ := json.Marshal(req)
+	_, _ = client.Write(append(data, '\n'))
+
+	reader := bufio.NewReader(client)
+	if _, err := reader.ReadBytes('\n'); err != nil {
+		t.Fatal(err)
+	}
+	_ = client.Close()
+	<-done
+
+	paramsData, _ := json.Marshal(seenParams)
+	var params struct {
+		Meta map[string]any `json:"_meta"`
+	}
+	_ = json.Unmarshal(paramsData, &params)
+	if params.Meta[metaProtocolVersion] != protocolVersionModern {
+		t.Errorf("forwarded request missing modern _meta: %v", params.Meta)
+	}
+}

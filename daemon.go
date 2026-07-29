@@ -175,37 +175,9 @@ func cmdDaemonRun() error {
 }
 
 func (d *daemon) startServer(config ServerConfig) (*managedServer, error) {
-	transport, err := NewStdioTransport(config.Command, config.Args)
+	transport, err := d.spawnAndNegotiate(config)
 	if err != nil {
-		return nil, fmt.Errorf("start: %w", err)
-	}
-
-	// MCP initialize handshake
-	initResp, err := transport.Send(jsonrpcRequest{
-		JSONRPC: jsonrpcVersion,
-		ID:      nextID(),
-		Method:  "initialize",
-		Params: initializeParams{
-			ProtocolVersion: "2025-03-26",
-			Capabilities:    clientCapabilities{},
-			ClientInfo:      clientInfo{Name: "mcp-cli", Version: Version},
-		},
-	})
-	if err != nil {
-		_ = transport.Close()
-		return nil, fmt.Errorf("initialize: %w", err)
-	}
-	if initResp.Error != nil {
-		_ = transport.Close()
-		return nil, fmt.Errorf("initialize: %s", initResp.Error.Message)
-	}
-
-	if err := transport.Notify(jsonrpcNotification{
-		JSONRPC: jsonrpcVersion,
-		Method:  "notifications/initialized",
-	}); err != nil {
-		_ = transport.Close()
-		return nil, fmt.Errorf("initialized notification: %w", err)
+		return nil, err
 	}
 
 	// Create Unix socket
@@ -316,41 +288,32 @@ func (d *daemon) respawnServer(ms *managedServer) error {
 	logStderr("respawning %q...", ms.config.Name)
 	_ = ms.transport.Close()
 
-	transport, err := NewStdioTransport(ms.config.Command, ms.config.Args)
+	transport, err := d.spawnAndNegotiate(ms.config)
 	if err != nil {
-		return err
-	}
-
-	initResp, err := transport.Send(jsonrpcRequest{
-		JSONRPC: jsonrpcVersion,
-		ID:      nextID(),
-		Method:  "initialize",
-		Params: initializeParams{
-			ProtocolVersion: "2025-03-26",
-			Capabilities:    clientCapabilities{},
-			ClientInfo:      clientInfo{Name: "mcp-cli", Version: Version},
-		},
-	})
-	if err != nil {
-		_ = transport.Close()
-		return err
-	}
-	if initResp.Error != nil {
-		_ = transport.Close()
-		return fmt.Errorf("%s", initResp.Error.Message)
-	}
-
-	if err := transport.Notify(jsonrpcNotification{
-		JSONRPC: jsonrpcVersion,
-		Method:  "notifications/initialized",
-	}); err != nil {
-		_ = transport.Close()
 		return err
 	}
 
 	ms.transport = transport
 	logStderr("respawned %q", ms.config.Name)
 	return nil
+}
+
+// spawnAndNegotiate starts a stdio server and negotiates its protocol era.
+// For modern (stateless) children the returned transport injects the
+// required _meta into every request forwarded through the daemon; legacy
+// children get the initialize handshake and pass-through forwarding.
+func (d *daemon) spawnAndNegotiate(config ServerConfig) (Transport, error) {
+	transport, err := NewStdioTransport(config.Command, config.Args)
+	if err != nil {
+		return nil, fmt.Errorf("start: %w", err)
+	}
+
+	negotiated, err := negotiateProtocol(transport)
+	if err != nil {
+		_ = transport.Close()
+		return nil, err
+	}
+	return negotiated, nil
 }
 
 func (d *daemon) shutdown() {

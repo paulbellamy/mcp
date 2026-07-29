@@ -332,7 +332,7 @@ func TestToolCacheSaveLoadTTL(t *testing.T) {
 		{Server: "test", Name: "tool1", Description: "desc1"},
 		{Server: "test", Name: "tool2", Description: "desc2"},
 	}
-	if err := saveCachedTools("test", toolList); err != nil {
+	if err := saveCachedTools("test", toolList, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -421,5 +421,47 @@ func TestValidateToolName(t *testing.T) {
 		if err := validateToolName(name); err == nil {
 			t.Errorf("expected %q to be invalid", name)
 		}
+	}
+}
+
+func TestLoadCachedTools_ServerTTLBoundsFreshness(t *testing.T) {
+	setupTestConfigDir(t)
+	toolList := []toolOutput{{Server: "s", Name: "tool1"}}
+
+	// A short server ttlMs (2026-07-28 hint) expires the cache before the
+	// 10-minute default would.
+	if err := writeJSON(cachePath("short"), ToolCache{
+		Tools:    toolList,
+		CachedAt: time.Now().Add(-5 * time.Second).Unix(),
+		TTLMs:    1000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if tools, err := loadCachedTools("short"); err != nil || tools != nil {
+		t.Errorf("expected stale cache under server ttlMs, got %v, %v", tools, err)
+	}
+
+	// Fresh within the server ttl still loads.
+	if err := writeJSON(cachePath("fresh"), ToolCache{
+		Tools:    toolList,
+		CachedAt: time.Now().Unix(),
+		TTLMs:    60000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if tools, err := loadCachedTools("fresh"); err != nil || len(tools) != 1 {
+		t.Errorf("expected fresh cache, got %v, %v", tools, err)
+	}
+
+	// A huge server ttlMs cannot extend past the default cap.
+	if err := writeJSON(cachePath("capped"), ToolCache{
+		Tools:    toolList,
+		CachedAt: time.Now().Add(-11 * time.Minute).Unix(),
+		TTLMs:    24 * 60 * 60 * 1000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if tools, err := loadCachedTools("capped"); err != nil || tools != nil {
+		t.Errorf("expected default TTL cap to win, got %v, %v", tools, err)
 	}
 }

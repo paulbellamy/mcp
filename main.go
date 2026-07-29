@@ -257,7 +257,7 @@ func addServer(server ServerConfig, authToken string) error {
 	}
 
 	logStderr("connecting to %s...", server.Name)
-	tools, err := discoverTools(&server, authToken)
+	tools, ttlMs, err := discoverTools(&server, authToken)
 	if err != nil {
 		logStderr("warning: could not discover tools: %v", err)
 		if server.Transport == "streamable-http" {
@@ -267,7 +267,7 @@ func addServer(server ServerConfig, authToken string) error {
 		return nil
 	}
 
-	if err := saveCachedTools(server.Name, tools); err != nil {
+	if err := saveCachedTools(server.Name, tools, ttlMs); err != nil {
 		logStderr("warning: cache write failed: %v", err)
 	}
 	logStderr("added server %q (%s) — %d tools discovered", server.Name, server.Transport, len(tools))

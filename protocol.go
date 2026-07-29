@@ -36,8 +36,9 @@ type jsonrpcResponse struct {
 }
 
 type jsonrpcError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
+	Code    int             `json:"code"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data,omitempty"`
 }
 
 func (e *jsonrpcError) Error() string {
@@ -45,6 +46,24 @@ func (e *jsonrpcError) Error() string {
 }
 
 // MCP protocol types
+
+// Protocol revisions the CLI speaks. Modern (2026-07-28 and later) servers
+// are stateless: every request carries its protocol version and capabilities
+// in _meta and there is no initialize handshake. Legacy servers negotiate a
+// session via initialize.
+const (
+	protocolVersionModern = "2026-07-28"
+	protocolVersionLegacy = "2025-03-26"
+)
+
+const clientName = "mcp-cli"
+
+// Reserved _meta keys carried on every modern request.
+const (
+	metaProtocolVersion    = "io.modelcontextprotocol/protocolVersion"
+	metaClientInfo         = "io.modelcontextprotocol/clientInfo"
+	metaClientCapabilities = "io.modelcontextprotocol/clientCapabilities"
+)
 
 type initializeParams struct {
 	ProtocolVersion string             `json:"protocolVersion"`
@@ -63,6 +82,43 @@ type clientInfo struct {
 // resources support) rather than a hard failure.
 const codeMethodNotFound = -32601
 
+// Error codes reserved by the 2026-07-28 spec (range -32020 to -32099).
+const (
+	codeHeaderMismatch                  = -32020
+	codeMissingRequiredClientCapability = -32021
+	codeUnsupportedProtocolVersion      = -32022
+)
+
+// unsupportedVersionData is the data payload of an
+// UnsupportedProtocolVersionError (-32022).
+type unsupportedVersionData struct {
+	Supported []string `json:"supported"`
+	Requested string   `json:"requested,omitempty"`
+}
+
+// discoverResult is the result of server/discover, which modern servers must
+// implement. The CLI uses it both for version selection and as the
+// backward-compatibility probe.
+type discoverResult struct {
+	SupportedVersions []string        `json:"supportedVersions"`
+	Capabilities      json.RawMessage `json:"capabilities,omitempty"`
+	Instructions      string          `json:"instructions,omitempty"`
+}
+
+// Result envelope types (2026-07-28). An absent resultType from an
+// earlier-protocol server is treated as "complete".
+const (
+	resultTypeComplete      = "complete"
+	resultTypeInputRequired = "input_required"
+)
+
+// inputRequest is one server-initiated request embedded in an
+// InputRequiredResult under the multi round-trip request (MRTR) pattern.
+type inputRequest struct {
+	Method string          `json:"method"`
+	Params json.RawMessage `json:"params,omitempty"`
+}
+
 type toolsListParams struct {
 	Cursor string `json:"cursor,omitempty"`
 }
@@ -70,6 +126,10 @@ type toolsListParams struct {
 type toolsListResult struct {
 	Tools      []mcpTool `json:"tools"`
 	NextCursor string    `json:"nextCursor,omitempty"`
+	// TTLMs is the 2026-07-28 freshness hint bounding how long the listing
+	// may be cached. 0 means the server provided none.
+	TTLMs      int64  `json:"ttlMs,omitempty"`
+	CacheScope string `json:"cacheScope,omitempty"`
 }
 
 type mcpTool struct {
@@ -113,10 +173,17 @@ type mcpResourceTemplate struct {
 
 type resourceReadParams struct {
 	URI string `json:"uri"`
+	// RequestState echoes an InputRequiredResult's opaque state on an MRTR
+	// retry. Never set on the initial request.
+	RequestState string `json:"requestState,omitempty"`
 }
 
 type resourceReadResult struct {
 	Contents []resourceContents `json:"contents"`
+	// 2026-07-28 result envelope; see toolCallResult.
+	ResultType    string                  `json:"resultType,omitempty"`
+	InputRequests map[string]inputRequest `json:"inputRequests,omitempty"`
+	RequestState  string                  `json:"requestState,omitempty"`
 }
 
 type resourceContents struct {
@@ -133,11 +200,20 @@ type toolCallParams struct {
 	// A nil map would marshal to null, so executeToolCall ensures it is a
 	// non-nil map; an empty map marshals to {}.
 	Arguments map[string]any `json:"arguments"`
+	// RequestState echoes an InputRequiredResult's opaque state on an MRTR
+	// retry. Never set on the initial request.
+	RequestState string `json:"requestState,omitempty"`
 }
 
 type toolCallResult struct {
 	Content []contentBlock `json:"content"`
 	IsError bool           `json:"isError,omitempty"`
+	// ResultType is the 2026-07-28 result envelope discriminator. Absent
+	// (legacy servers) means "complete". "input_required" carries
+	// InputRequests and/or RequestState per the MRTR pattern.
+	ResultType    string                  `json:"resultType,omitempty"`
+	InputRequests map[string]inputRequest `json:"inputRequests,omitempty"`
+	RequestState  string                  `json:"requestState,omitempty"`
 }
 
 type contentBlock struct {

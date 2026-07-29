@@ -26,7 +26,7 @@ func TestIntegration_FullLifecycle(t *testing.T) {
 	defer func() { _ = transport.Close() }()
 
 	// List tools
-	tools, err := listAllTools(transport, "test")
+	tools, _, err := listAllTools(transport, "test")
 	if err != nil {
 		t.Fatal("list tools:", err)
 	}

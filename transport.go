@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -251,6 +252,17 @@ func (t *StdioTransport) Close() error {
 	}
 }
 
+// httpStatusError is a non-2xx HTTP response. Negotiation inspects the
+// status and body to distinguish legacy servers from modern rejections.
+type httpStatusError struct {
+	status int
+	body   []byte
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("http %d: %s", e.status, e.body)
+}
+
 // HTTPTransport communicates with an MCP server via streamable HTTP.
 type HTTPTransport struct {
 	url       string
@@ -258,11 +270,16 @@ type HTTPTransport struct {
 	client    *http.Client
 	sessionID string
 
-	// mu guards the timeout fields below. SetTimeout may be called from a
-	// different goroutine than Send/SendStreaming.
+	// mu guards the fields below. SetTimeout and setProtocolVersion may be
+	// called from a different goroutine than Send/SendStreaming.
 	mu             sync.Mutex
 	requestTimeout time.Duration // for Send; 0 = no timeout
 	streamTimeout  time.Duration // for SendStreaming; 0 = no timeout
+	// protocolVersion selects the request framing. Non-empty (modern,
+	// 2026-07-28+): send MCP-Protocol-Version/Mcp-Method/Mcp-Name headers
+	// and no session ID. Empty (legacy): session ID handling, no metadata
+	// headers.
+	protocolVersion string
 }
 
 func NewHTTPTransport(url string, authToken string) *HTTPTransport {
@@ -283,6 +300,14 @@ func (t *HTTPTransport) SetTimeout(d time.Duration) {
 	t.mu.Lock()
 	t.requestTimeout = d
 	t.streamTimeout = d
+	t.mu.Unlock()
+}
+
+// setProtocolVersion switches the transport between modern stateless framing
+// (non-empty version) and legacy session framing (empty).
+func (t *HTTPTransport) setProtocolVersion(version string) {
+	t.mu.Lock()
+	t.protocolVersion = version
 	t.mu.Unlock()
 }
 
@@ -320,7 +345,18 @@ func (t *HTTPTransport) sendWithContext(ctx context.Context, req jsonrpcRequest,
 	if t.authToken != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+t.authToken)
 	}
-	if t.sessionID != "" {
+	t.mu.Lock()
+	version := t.protocolVersion
+	t.mu.Unlock()
+	if version != "" {
+		// Modern stateless framing: mirror body fields into the standard
+		// request metadata headers; no protocol-level session exists.
+		httpReq.Header.Set("MCP-Protocol-Version", version)
+		httpReq.Header.Set("Mcp-Method", req.Method)
+		if name, ok := mcpNameForRequest(req); ok {
+			httpReq.Header.Set("Mcp-Name", encodeHeaderValue(name))
+		}
+	} else if t.sessionID != "" {
 		httpReq.Header.Set("Mcp-Session-Id", t.sessionID)
 	}
 
@@ -332,11 +368,12 @@ func (t *HTTPTransport) sendWithContext(ctx context.Context, req jsonrpcRequest,
 
 	if httpResp.StatusCode != http.StatusOK {
 		body, _ := readResponseBody(httpResp.Body)
-		return jsonrpcResponse{}, fmt.Errorf("http %d: %s", httpResp.StatusCode, string(body))
+		return jsonrpcResponse{}, &httpStatusError{status: httpResp.StatusCode, body: body}
 	}
 
-	// Save session ID if provided
-	if sid := httpResp.Header.Get("Mcp-Session-Id"); sid != "" {
+	// Save session ID if provided (legacy servers only; modern servers do
+	// not mint sessions and any such header is ignored).
+	if sid := httpResp.Header.Get("Mcp-Session-Id"); sid != "" && version == "" {
 		t.sessionID = sid
 	}
 
@@ -359,6 +396,65 @@ func (t *HTTPTransport) sendWithContext(ctx context.Context, req jsonrpcRequest,
 	}
 
 	return resp, nil
+}
+
+// mcpNameForRequest returns the value for the Mcp-Name header: the tool or
+// prompt name, or the resource URI, for the methods that require it.
+func mcpNameForRequest(req jsonrpcRequest) (string, bool) {
+	var field string
+	switch req.Method {
+	case "tools/call", "prompts/get":
+		field = "name"
+	case "resources/read":
+		field = "uri"
+	default:
+		return "", false
+	}
+
+	data, err := json.Marshal(req.Params)
+	if err != nil {
+		return "", false
+	}
+	var params map[string]json.RawMessage
+	if err := json.Unmarshal(data, &params); err != nil {
+		return "", false
+	}
+	var name string
+	if err := json.Unmarshal(params[field], &name); err != nil || name == "" {
+		return "", false
+	}
+	return name, true
+}
+
+// encodeHeaderValue makes a value safe for an HTTP header per the spec's
+// value-encoding rules: values outside visible ASCII (or with leading or
+// trailing whitespace, or matching the sentinel pattern) are carried as
+// "=?base64?<encoded>?=".
+func encodeHeaderValue(v string) string {
+	if headerValueSafe(v) {
+		return v
+	}
+	return "=?base64?" + base64.StdEncoding.EncodeToString([]byte(v)) + "?="
+}
+
+func headerValueSafe(v string) bool {
+	if v == "" {
+		return true
+	}
+	// A literal value matching the sentinel pattern must itself be encoded.
+	if strings.HasPrefix(v, "=?base64?") && strings.HasSuffix(v, "?=") {
+		return false
+	}
+	if v[0] == ' ' || v[len(v)-1] == ' ' {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		b := v[i]
+		if b != ' ' && (b < 0x21 || b > 0x7e) {
+			return false
+		}
+	}
+	return true
 }
 
 // annotateTimeout rewrites context-deadline errors into a clearer message

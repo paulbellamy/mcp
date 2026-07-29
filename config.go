@@ -102,6 +102,9 @@ type PendingAuth struct {
 type ToolCache struct {
 	Tools    []toolOutput `json:"tools"`
 	CachedAt int64        `json:"cached_at"`
+	// TTLMs is the server's ttlMs freshness hint (2026-07-28). When set it
+	// bounds the cache TTL; 0 means the default applies.
+	TTLMs int64 `json:"ttl_ms,omitempty"`
 }
 
 // testConfigDir overrides the config directory for tests.
@@ -426,8 +429,14 @@ func loadCachedTools(name string) ([]toolOutput, error) {
 		return nil, nil
 	}
 
-	// Check TTL
-	if time.Since(time.Unix(cache.CachedAt, 0)) > cacheTTL {
+	// Check TTL: the server's ttlMs hint can only tighten the default.
+	ttl := cacheTTL
+	if cache.TTLMs > 0 {
+		if serverTTL := time.Duration(cache.TTLMs) * time.Millisecond; serverTTL < ttl {
+			ttl = serverTTL
+		}
+	}
+	if time.Since(time.Unix(cache.CachedAt, 0)) > ttl {
 		return nil, nil
 	}
 
@@ -447,10 +456,12 @@ func loadCachedToolsStale(name string) ([]toolOutput, error) {
 	return cache.Tools, nil
 }
 
-// saveCachedTools saves tool definitions to cache.
-func saveCachedTools(name string, tools []toolOutput) error {
+// saveCachedTools saves tool definitions to cache. ttlMs is the server's
+// freshness hint (0 = none; the default TTL applies).
+func saveCachedTools(name string, tools []toolOutput, ttlMs int64) error {
 	return writeJSON(cachePath(name), ToolCache{
 		Tools:    tools,
 		CachedAt: time.Now().Unix(),
+		TTLMs:    ttlMs,
 	})
 }

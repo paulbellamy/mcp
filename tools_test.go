@@ -25,7 +25,7 @@ func TestListAllTools_SinglePage(t *testing.T) {
 		},
 	}
 
-	tools, err := listAllTools(transport, "test-server")
+	tools, _, err := listAllTools(transport, "test-server")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestListAllTools_Pagination(t *testing.T) {
 		},
 	}
 
-	tools, err := listAllTools(transport, "srv")
+	tools, _, err := listAllTools(transport, "srv")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestListAllTools_ErrorResponse(t *testing.T) {
 		},
 	}
 
-	_, err := listAllTools(transport, "srv")
+	_, _, err := listAllTools(transport, "srv")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -131,7 +131,7 @@ func TestListAllTools_TransportError(t *testing.T) {
 		},
 	}
 
-	_, err := listAllTools(transport, "srv")
+	_, _, err := listAllTools(transport, "srv")
 	if err == nil {
 		t.Fatal("expected error")
 	}

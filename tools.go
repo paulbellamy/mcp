@@ -10,22 +10,24 @@ import (
 	"time"
 )
 
-// mcpConnect creates a transport, sends initialize + initialized, returns the transport.
+// mcpConnect creates a transport, negotiates the protocol era (stateless
+// 2026-07-28, or the legacy initialize handshake), and returns a
+// ready-to-use transport.
 func mcpConnect(server *ServerConfig, authToken string) (Transport, error) {
 	return mcpConnectTimeout(server, authToken, 0)
 }
 
-// mcpConnectTimeout is like mcpConnect but bounds the initialize handshake with
-// the given per-call timeout (0 = transport default). The auth idempotency
-// probe passes a short timeout so a reachable-but-unresponsive server can't
-// stall the command for the full default send timeout.
+// mcpConnectTimeout is like mcpConnect but bounds the negotiation with the
+// given per-call timeout (0 = transport default). The auth idempotency probe
+// passes a short timeout so a reachable-but-unresponsive server can't stall
+// the command for the full default send timeout.
 func mcpConnectTimeout(server *ServerConfig, authToken string, timeout time.Duration) (Transport, error) {
 	var transport Transport
 	var err error
 
 	switch server.Transport {
 	case "stdio":
-		// Try daemon first — server already initialized
+		// Try daemon first — the daemon already negotiated with the server
 		if t, err := NewDaemonTransport(server.Name); err == nil {
 			return t, nil
 		}
@@ -44,56 +46,34 @@ func mcpConnectTimeout(server *ServerConfig, authToken string, timeout time.Dura
 		transport.SetTimeout(timeout)
 	}
 
-	// MCP initialize handshake
-	initResp, err := transport.Send(jsonrpcRequest{
-		JSONRPC: jsonrpcVersion,
-		ID:      nextID(),
-		Method:  "initialize",
-		Params: initializeParams{
-			ProtocolVersion: "2025-03-26",
-			Capabilities:    clientCapabilities{},
-			ClientInfo: clientInfo{
-				Name:    "mcp-cli",
-				Version: Version,
-			},
-		},
-	})
+	negotiated, err := negotiateProtocol(transport)
 	if err != nil {
 		_ = transport.Close()
-		return nil, fmt.Errorf("initialize: %w", err)
-	}
-	if initResp.Error != nil {
-		_ = transport.Close()
-		return nil, fmt.Errorf("initialize: %s", initResp.Error.Message)
+		return nil, err
 	}
 
-	// Send initialized notification
-	if err := transport.Notify(jsonrpcNotification{
-		JSONRPC: jsonrpcVersion,
-		Method:  "notifications/initialized",
-	}); err != nil {
-		_ = transport.Close()
-		return nil, fmt.Errorf("send initialized notification: %w", err)
-	}
-
-	return transport, nil
+	return negotiated, nil
 }
 
-// discoverTools connects to a server, lists tools, and returns them.
-func discoverTools(server *ServerConfig, authToken string) ([]toolOutput, error) {
+// discoverTools connects to a server, lists tools, and returns them along
+// with the server's cache freshness hint (ttlMs; 0 = none provided).
+func discoverTools(server *ServerConfig, authToken string) ([]toolOutput, int64, error) {
 	transport, err := mcpConnect(server, authToken)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer func() { _ = transport.Close() }()
 
 	return listAllTools(transport, server.Name)
 }
 
-// listAllTools fetches all tools from a connected transport, handling pagination.
-func listAllTools(transport Transport, serverName string) ([]toolOutput, error) {
+// listAllTools fetches all tools from a connected transport, handling
+// pagination. The returned ttlMs is the smallest freshness hint seen across
+// pages (0 when the server provided none).
+func listAllTools(transport Transport, serverName string) ([]toolOutput, int64, error) {
 	var allTools []toolOutput
 	var cursor string
+	var ttlMs int64
 	const maxPages = 100
 
 	for page := 0; page < maxPages; page++ {
@@ -110,15 +90,19 @@ func listAllTools(transport Transport, serverName string) ([]toolOutput, error) 
 		})
 
 		if err != nil {
-			return nil, fmt.Errorf("list tools: %w", err)
+			return nil, 0, fmt.Errorf("list tools: %w", err)
 		}
 		if resp.Error != nil {
-			return nil, fmt.Errorf("list tools: %s", resp.Error.Message)
+			return nil, 0, fmt.Errorf("list tools: %s", resp.Error.Message)
 		}
 
 		var result toolsListResult
 		if err := json.Unmarshal(resp.Result, &result); err != nil {
-			return nil, fmt.Errorf("unmarshal tools: %w", err)
+			return nil, 0, fmt.Errorf("unmarshal tools: %w", err)
+		}
+
+		if result.TTLMs > 0 && (ttlMs == 0 || result.TTLMs < ttlMs) {
+			ttlMs = result.TTLMs
 		}
 
 		for _, t := range result.Tools {
@@ -140,15 +124,20 @@ func listAllTools(transport Transport, serverName string) ([]toolOutput, error) 
 		logStderr("warning: tools list truncated after %d pages", maxPages)
 	}
 
-	return allTools, nil
+	return allTools, ttlMs, nil
 }
 
-// mcpPing sends a ping request to verify server liveness.
+// mcpPing verifies server liveness. Modern servers dropped ping from the
+// protocol, so a stateless session probes with server/discover instead.
 func mcpPing(transport Transport) error {
+	method := "ping"
+	if _, ok := transport.(*protocolSession); ok {
+		method = "server/discover"
+	}
 	resp, err := transport.Send(jsonrpcRequest{
 		JSONRPC: jsonrpcVersion,
 		ID:      nextID(),
-		Method:  "ping",
+		Method:  method,
 	})
 	if err != nil {
 		return fmt.Errorf("ping: %w", err)
@@ -179,13 +168,13 @@ func getToolsForServer(server *ServerConfig, refresh bool) ([]toolOutput, error)
 	}
 
 	// Discover fresh
-	tools, err := discoverTools(server, authToken)
+	tools, ttlMs, err := discoverTools(server, authToken)
 	if err != nil {
 		return nil, err
 	}
 
 	// Cache the results
-	if cacheErr := saveCachedTools(server.Name, tools); cacheErr != nil {
+	if cacheErr := saveCachedTools(server.Name, tools, ttlMs); cacheErr != nil {
 		logStderr("warning: cache write failed: %v", cacheErr)
 	}
 
@@ -301,7 +290,7 @@ Flags:
 		if err != nil {
 			return err
 		}
-		tools, err := discoverTools(server, authToken)
+		tools, _, err := discoverTools(server, authToken)
 		if err != nil {
 			return err
 		}

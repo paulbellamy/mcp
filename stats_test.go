@@ -68,7 +68,7 @@ func TestCmdStats_Summary(t *testing.T) {
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}}}`),
 		},
 	}
-	if err := saveCachedTools("alpha", tools); err != nil {
+	if err := saveCachedTools("alpha", tools, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -109,7 +109,7 @@ func TestCmdStats_FullIncludesPerToolBreakdown(t *testing.T) {
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"msg":{"type":"string"}}}`),
 		},
 	}
-	if err := saveCachedTools("beta", tools); err != nil {
+	if err := saveCachedTools("beta", tools, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -168,7 +168,7 @@ func TestCmdStats_SkipsDisabledServers(t *testing.T) {
 	}
 	if err := saveCachedTools("off", []toolOutput{
 		{Server: "off", Name: "ghost", InputSchema: json.RawMessage(`{}`)},
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatal(err)
 	}
 

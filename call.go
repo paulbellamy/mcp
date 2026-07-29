@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -268,18 +269,24 @@ func saveFullOutput(serverName, toolName, content string) string {
 	return path
 }
 
-// handleToolResponse converts a JSON-RPC response into a callOutput.
-func handleToolResponse(resp jsonrpcResponse) (callOutput, error) {
-	if resp.Error != nil {
-		return callOutput{Content: resp.Error.Message, IsError: true}, nil
-	}
+// maxInputRequiredRetries bounds the multi round-trip request (MRTR) retry
+// loop so a server that answers every attempt with input_required cannot
+// spin the CLI forever.
+const maxInputRequiredRetries = 5
 
-	var result toolCallResult
-	if err := json.Unmarshal(resp.Result, &result); err != nil {
-		return callOutput{}, fmt.Errorf("unmarshal tool result: %w", err)
+// inputRequiredError renders an input_required result the CLI cannot
+// fulfill: the server asked for interactive input (elicitation, sampling, or
+// roots) that this client does not declare support for.
+func inputRequiredError(requests map[string]inputRequest) callOutput {
+	var wants []string
+	for id, r := range requests {
+		wants = append(wants, fmt.Sprintf("%s (%s)", r.Method, id))
 	}
-
-	return renderToolCallResult(result), nil
+	sort.Strings(wants)
+	return callOutput{
+		Content: "server requires interactive input this CLI does not support: " + strings.Join(wants, ", "),
+		IsError: true,
+	}
 }
 
 // renderToolCallResult converts a toolCallResult into a callOutput.
@@ -394,7 +401,10 @@ func showToolHelp(serverName, toolName string) error {
 	return nil
 }
 
-// executeToolCall sends a tools/call request and returns the output.
+// executeToolCall sends a tools/call request and returns the output. Under
+// the 2026-07-28 MRTR pattern a server may answer with an input_required
+// result; when it carries only opaque requestState the call is retried (as a
+// fresh request echoing the state) until it completes or the retry cap hits.
 func executeToolCall(transport Transport, toolName string, params map[string]any, stream bool) (callOutput, error) {
 	// Always send an arguments object, even when empty. A nil map would
 	// marshal to null; an empty map marshals to {} which servers expect.
@@ -402,31 +412,60 @@ func executeToolCall(transport Transport, toolName string, params map[string]any
 		params = map[string]any{}
 	}
 
-	req := jsonrpcRequest{
-		JSONRPC: jsonrpcVersion,
-		ID:      nextID(),
-		Method:  "tools/call",
-		Params: toolCallParams{
-			Name:      toolName,
-			Arguments: params,
-		},
+	callParams := toolCallParams{
+		Name:      toolName,
+		Arguments: params,
 	}
 
-	var resp jsonrpcResponse
-	var err error
+	for attempt := 0; attempt < maxInputRequiredRetries; attempt++ {
+		req := jsonrpcRequest{
+			JSONRPC: jsonrpcVersion,
+			ID:      nextID(),
+			Method:  "tools/call",
+			Params:  callParams,
+		}
 
-	if stream {
-		resp, err = transport.SendStreaming(req, func(evt streamEvent) {
-			data, _ := json.Marshal(evt)
-			_, _ = fmt.Fprintln(os.Stdout, string(data))
-		})
-	} else {
-		resp, err = transport.Send(req)
+		var resp jsonrpcResponse
+		var err error
+
+		if stream {
+			resp, err = transport.SendStreaming(req, func(evt streamEvent) {
+				data, _ := json.Marshal(evt)
+				_, _ = fmt.Fprintln(os.Stdout, string(data))
+			})
+		} else {
+			resp, err = transport.Send(req)
+		}
+
+		if err != nil {
+			return callOutput{}, fmt.Errorf("call tool: %w", err)
+		}
+		if resp.Error != nil {
+			return callOutput{Content: resp.Error.Message, IsError: true}, nil
+		}
+
+		var result toolCallResult
+		if err := json.Unmarshal(resp.Result, &result); err != nil {
+			return callOutput{}, fmt.Errorf("unmarshal tool result: %w", err)
+		}
+
+		switch result.ResultType {
+		// Absent means "complete" for servers on earlier protocol revisions.
+		case "", resultTypeComplete:
+			return renderToolCallResult(result), nil
+		case resultTypeInputRequired:
+			if len(result.InputRequests) > 0 {
+				return inputRequiredError(result.InputRequests), nil
+			}
+			if result.RequestState == "" {
+				return callOutput{}, fmt.Errorf("call tool: input_required result carries neither inputRequests nor requestState")
+			}
+			// Retry the original request echoing the opaque state verbatim.
+			callParams.RequestState = result.RequestState
+		default:
+			return callOutput{}, fmt.Errorf("call tool: unsupported result type %q", result.ResultType)
+		}
 	}
 
-	if err != nil {
-		return callOutput{}, fmt.Errorf("call tool: %w", err)
-	}
-
-	return handleToolResponse(resp)
+	return callOutput{}, fmt.Errorf("call tool: server still required input after %d attempts", maxInputRequiredRetries)
 }
