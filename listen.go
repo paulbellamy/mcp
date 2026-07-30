@@ -18,7 +18,7 @@ func cmdListen(args []string) error {
 		return err
 	}
 	if showHelp {
-		_, _ = fmt.Fprintln(os.Stderr, `Usage: mcp listen <server|url> [--tools] [--prompts] [--resources] [--resource <uri>]... [--json]
+		_, _ = fmt.Fprintln(os.Stderr, `Usage: mcp listen <server|url> [--tools] [--prompts] [--resources] [--resource <uri> ...] [--json]
 
 Hold a subscriptions/listen stream open and print one JSON line per change
 notification. Requires a server speaking protocol 2026-07-28 or later; at
@@ -92,7 +92,7 @@ func parseListenArgs(args []string) (string, subscriptionsListenParams, bool, er
 	}
 
 	if serverName == "" {
-		return "", subscriptionsListenParams{}, false, fmt.Errorf("usage: mcp listen <server|url> [--tools] [--prompts] [--resources] [--resource <uri>]...")
+		return "", subscriptionsListenParams{}, false, fmt.Errorf("usage: mcp listen <server|url> [--tools] [--prompts] [--resources] [--resource <uri> ...]")
 	}
 	if !tools && !prompts && !resources && len(resourceURIs) == 0 {
 		return "", subscriptionsListenParams{}, false, fmt.Errorf("at least one of --tools, --prompts, --resources, or --resource <uri> is required")
