@@ -281,7 +281,7 @@ func TestCmdSchema_FromCache(t *testing.T) {
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}}}`),
 		},
 	}
-	if err := saveCachedTools("srv", tools, 0); err != nil {
+	if err := saveCachedTools("srv", tools, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -312,7 +312,7 @@ func TestCmdSchema_ToolNotFound(t *testing.T) {
 	tools := []toolOutput{
 		{Server: "srv", Name: "search"},
 	}
-	if err := saveCachedTools("srv", tools, 0); err != nil {
+	if err := saveCachedTools("srv", tools, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -328,7 +328,7 @@ func TestCmdSchema_ToolNotFound(t *testing.T) {
 func TestCmdSchema_UnknownFlag(t *testing.T) {
 	setupTestConfigDir(t)
 	tools := []toolOutput{{Server: "srv", Name: "tool"}}
-	if err := saveCachedTools("srv", tools, 0); err != nil {
+	if err := saveCachedTools("srv", tools, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := cmdSchema([]string{"srv", "tool", "--bogus"}); err == nil {

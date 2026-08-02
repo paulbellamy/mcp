@@ -517,11 +517,14 @@ func isHeaderMismatch(err error) bool {
 }
 
 // computeExtraHeaders derives the Mcp-Param-* headers for a call from the
-// tool's cached inputSchema. No cached schema, or an invalid one (possible
-// with a cache written before annotation validation existed), yields no
-// headers — the server validates the arguments against the body regardless.
+// tool's cached inputSchema. A stale cache is acceptable here — servers that
+// hint ttlMs 0 would otherwise never get Mcp-Param headers, and a genuinely
+// outdated schema is recovered by the HeaderMismatch refresh-and-retry. No
+// cached schema, or an invalid one (possible with a cache written before
+// annotation validation existed), yields no headers — the server validates
+// the arguments against the body regardless.
 func computeExtraHeaders(serverName, toolName string, args map[string]any) map[string]string {
-	cached, err := loadCachedTools(serverName)
+	cached, err := loadCachedToolsStale(serverName)
 	if err != nil || cached == nil {
 		return nil
 	}

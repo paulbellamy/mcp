@@ -107,8 +107,11 @@ type ToolCache struct {
 	Tools    []toolOutput `json:"tools"`
 	CachedAt int64        `json:"cached_at"`
 	// TTLMs is the server's ttlMs freshness hint (2026-07-28). When set it
-	// bounds the cache TTL; 0 means the default applies.
-	TTLMs int64 `json:"ttl_ms,omitempty"`
+	// bounds the cache TTL; an explicit 0 marks the listing immediately
+	// stale (freshness-checked loads always refetch, only the stale loader
+	// serves it). nil means the server provided no hint and the default
+	// TTL applies.
+	TTLMs *int64 `json:"ttl_ms,omitempty"`
 }
 
 // testConfigDir overrides the config directory for tests.
@@ -433,10 +436,11 @@ func loadCachedTools(name string) ([]toolOutput, error) {
 		return nil, nil
 	}
 
-	// Check TTL: the server's ttlMs hint can only tighten the default.
+	// Check TTL: the server's ttlMs hint can only tighten the default. An
+	// explicit 0 (or negative) hint means immediately stale per spec.
 	ttl := cacheTTL
-	if cache.TTLMs > 0 {
-		if serverTTL := time.Duration(cache.TTLMs) * time.Millisecond; serverTTL < ttl {
+	if cache.TTLMs != nil {
+		if serverTTL := time.Duration(*cache.TTLMs) * time.Millisecond; serverTTL < ttl {
 			ttl = serverTTL
 		}
 	}
@@ -461,8 +465,9 @@ func loadCachedToolsStale(name string) ([]toolOutput, error) {
 }
 
 // saveCachedTools saves tool definitions to cache. ttlMs is the server's
-// freshness hint (0 = none; the default TTL applies).
-func saveCachedTools(name string, tools []toolOutput, ttlMs int64) error {
+// freshness hint (nil = none; the default TTL applies). An explicit 0 is
+// still written: the file then only serves stale-tolerant readers.
+func saveCachedTools(name string, tools []toolOutput, ttlMs *int64) error {
 	return writeJSON(cachePath(name), ToolCache{
 		Tools:    tools,
 		CachedAt: time.Now().Unix(),

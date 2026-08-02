@@ -332,7 +332,7 @@ func TestToolCacheSaveLoadTTL(t *testing.T) {
 		{Server: "test", Name: "tool1", Description: "desc1"},
 		{Server: "test", Name: "tool2", Description: "desc2"},
 	}
-	if err := saveCachedTools("test", toolList, 0); err != nil {
+	if err := saveCachedTools("test", toolList, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -424,6 +424,8 @@ func TestValidateToolName(t *testing.T) {
 	}
 }
 
+func i64(v int64) *int64 { return &v }
+
 func TestLoadCachedTools_ServerTTLBoundsFreshness(t *testing.T) {
 	setupTestConfigDir(t)
 	toolList := []toolOutput{{Server: "s", Name: "tool1"}}
@@ -433,7 +435,7 @@ func TestLoadCachedTools_ServerTTLBoundsFreshness(t *testing.T) {
 	if err := writeJSON(cachePath("short"), ToolCache{
 		Tools:    toolList,
 		CachedAt: time.Now().Add(-5 * time.Second).Unix(),
-		TTLMs:    1000,
+		TTLMs:    i64(1000),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -445,7 +447,7 @@ func TestLoadCachedTools_ServerTTLBoundsFreshness(t *testing.T) {
 	if err := writeJSON(cachePath("fresh"), ToolCache{
 		Tools:    toolList,
 		CachedAt: time.Now().Unix(),
-		TTLMs:    60000,
+		TTLMs:    i64(60000),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -457,11 +459,33 @@ func TestLoadCachedTools_ServerTTLBoundsFreshness(t *testing.T) {
 	if err := writeJSON(cachePath("capped"), ToolCache{
 		Tools:    toolList,
 		CachedAt: time.Now().Add(-11 * time.Minute).Unix(),
-		TTLMs:    24 * 60 * 60 * 1000,
+		TTLMs:    i64(24 * 60 * 60 * 1000),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if tools, err := loadCachedTools("capped"); err != nil || tools != nil {
 		t.Errorf("expected default TTL cap to win, got %v, %v", tools, err)
+	}
+
+	// An explicit ttlMs of 0 means immediately stale (the live Cloudflare
+	// docs server sends this; SDKs default to it), no matter how fresh the
+	// write is. Only the stale-tolerant loader may serve it.
+	if err := saveCachedTools("zero", toolList, i64(0)); err != nil {
+		t.Fatal(err)
+	}
+	if tools, err := loadCachedTools("zero"); err != nil || tools != nil {
+		t.Errorf("expected explicit ttlMs=0 to be immediately stale, got %v, %v", tools, err)
+	}
+	if tools, err := loadCachedToolsStale("zero"); err != nil || len(tools) != 1 {
+		t.Errorf("expected stale loader to still serve ttlMs=0 cache, got %v, %v", tools, err)
+	}
+
+	// Absent hint (nil): the 10-minute default applies and a fresh write
+	// loads normally.
+	if err := saveCachedTools("nohint", toolList, nil); err != nil {
+		t.Fatal(err)
+	}
+	if tools, err := loadCachedTools("nohint"); err != nil || len(tools) != 1 {
+		t.Errorf("expected default TTL for absent hint, got %v, %v", tools, err)
 	}
 }

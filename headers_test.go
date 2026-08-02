@@ -353,7 +353,7 @@ func TestCmdCall_McpParamHeadersEndToEnd(t *testing.T) {
 	// Fresh cache carrying the annotated schema, as `mcp tools` leaves it.
 	if err := saveCachedTools("hdr", []toolOutput{
 		{Server: "hdr", Name: "deploy", InputSchema: json.RawMessage(annotatedDeploySchema)},
-	}, 0); err != nil {
+	}, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -393,7 +393,7 @@ func TestCmdCall_HeaderMismatchRefreshesAndRetries(t *testing.T) {
 	// call sends no Mcp-Param-* headers and the server answers -32020.
 	if err := saveCachedTools("hdr", []toolOutput{
 		{Server: "hdr", Name: "deploy", InputSchema: json.RawMessage(`{"type":"object","properties":{"region":{"type":"string"},"count":{"type":"integer"}}}`)},
-	}, 0); err != nil {
+	}, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -574,5 +574,32 @@ func TestExtractHeaderParams_PropertyNamedXMcpHeaderIsNotAnnotation(t *testing.T
 	}
 	if len(params) != 0 {
 		t.Errorf("no annotations expected, got %+v", params)
+	}
+}
+
+// A cache whose server hinted ttlMs 0 (immediately stale — what the live
+// Cloudflare docs server and the SDK defaults produce) must still feed
+// Mcp-Param header computation and flag typing: both are stale-tolerant
+// readers, and the freshness-checked loader would never serve them.
+func TestExplicitZeroTTLCacheStillServesSchemaReaders(t *testing.T) {
+	setupTestConfigDir(t)
+	schema := json.RawMessage(`{"type":"object","properties":{"region":{"type":"string","x-mcp-header":"Region"},"count":{"type":"integer"}}}`)
+	if err := saveCachedTools("zttl", []toolOutput{
+		{Server: "zttl", Name: "deploy", InputSchema: schema},
+	}, i64(0)); err != nil {
+		t.Fatal(err)
+	}
+
+	headers := computeExtraHeaders("zttl", "deploy", map[string]any{"region": "eu-west"})
+	if headers["Mcp-Param-Region"] != "eu-west" {
+		t.Errorf("expected Mcp-Param-Region from ttlMs=0 cache, got %v", headers)
+	}
+
+	params, complexTypes, err := getToolSchema("zttl", "deploy")
+	if err != nil {
+		t.Fatalf("expected schema from ttlMs=0 cache, got error: %v", err)
+	}
+	if len(params) != 2 || len(complexTypes) != 0 {
+		t.Errorf("unexpected schema parse: params=%+v complex=%+v", params, complexTypes)
 	}
 }

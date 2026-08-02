@@ -158,8 +158,8 @@ func TestModernHTTP_EndToEnd(t *testing.T) {
 	if len(tools) != 1 || tools[0].Name != "echo" {
 		t.Errorf("unexpected tools: %+v", tools)
 	}
-	if ttlMs != 60000 {
-		t.Errorf("ttlMs = %d, want 60000", ttlMs)
+	if ttlMs == nil || *ttlMs != 60000 {
+		t.Errorf("ttlMs = %v, want 60000", ttlMs)
 	}
 
 	out, err := executeToolCall(transport, "echo", map[string]any{"msg": "hi"}, false, nil)

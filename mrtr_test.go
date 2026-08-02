@@ -250,7 +250,7 @@ func TestListAllTools_TTLMinAcrossPages(t *testing.T) {
 	if len(tools) != 2 {
 		t.Fatalf("expected 2 tools, got %d", len(tools))
 	}
-	if ttlMs != 30000 {
-		t.Errorf("ttlMs = %d, want the smallest hint 30000", ttlMs)
+	if ttlMs == nil || *ttlMs != 30000 {
+		t.Errorf("ttlMs = %v, want the smallest hint 30000", ttlMs)
 	}
 }

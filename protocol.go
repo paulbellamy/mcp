@@ -155,8 +155,9 @@ type toolsListResult struct {
 	Tools      []mcpTool `json:"tools"`
 	NextCursor string    `json:"nextCursor,omitempty"`
 	// TTLMs is the 2026-07-28 freshness hint bounding how long the listing
-	// may be cached. 0 means the server provided none.
-	TTLMs      int64  `json:"ttlMs,omitempty"`
+	// may be cached. nil means the server provided none; an explicit 0
+	// marks the result immediately stale (Cache-Control: max-age analog).
+	TTLMs      *int64 `json:"ttlMs,omitempty"`
 	CacheScope string `json:"cacheScope,omitempty"`
 }
 

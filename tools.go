@@ -70,11 +70,11 @@ func mcpConnectOpts(server *ServerConfig, authToken string, timeout time.Duratio
 }
 
 // discoverTools connects to a server, lists tools, and returns them along
-// with the server's cache freshness hint (ttlMs; 0 = none provided).
-func discoverTools(server *ServerConfig, authToken string) ([]toolOutput, int64, error) {
+// with the server's cache freshness hint (ttlMs; nil = none provided).
+func discoverTools(server *ServerConfig, authToken string) ([]toolOutput, *int64, error) {
 	transport, err := mcpConnect(server, authToken)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
 	defer func() { _ = transport.Close() }()
 
@@ -95,12 +95,13 @@ func isModernHTTP(transport Transport) bool {
 
 // listAllTools fetches all tools from a connected transport, handling
 // pagination. The returned ttlMs is the smallest freshness hint seen across
-// pages (0 when the server provided none). On modern streamable HTTP, tools
-// whose x-mcp-header annotations are invalid must be excluded per spec.
-func listAllTools(transport Transport, serverName string) ([]toolOutput, int64, error) {
+// pages (nil when the server provided none; negative hints clamp to 0 per
+// spec). On modern streamable HTTP, tools whose x-mcp-header annotations are
+// invalid must be excluded per spec.
+func listAllTools(transport Transport, serverName string) ([]toolOutput, *int64, error) {
 	var allTools []toolOutput
 	var cursor string
-	var ttlMs int64
+	var ttlMs *int64
 	modernHTTP := isModernHTTP(transport)
 	const maxPages = 100
 
@@ -118,19 +119,22 @@ func listAllTools(transport Transport, serverName string) ([]toolOutput, int64, 
 		})
 
 		if err != nil {
-			return nil, 0, fmt.Errorf("list tools: %w", err)
+			return nil, nil, fmt.Errorf("list tools: %w", err)
 		}
 		if resp.Error != nil {
-			return nil, 0, fmt.Errorf("list tools: %s", resp.Error.Message)
+			return nil, nil, fmt.Errorf("list tools: %s", resp.Error.Message)
 		}
 
 		var result toolsListResult
 		if err := json.Unmarshal(resp.Result, &result); err != nil {
-			return nil, 0, fmt.Errorf("unmarshal tools: %w", err)
+			return nil, nil, fmt.Errorf("unmarshal tools: %w", err)
 		}
 
-		if result.TTLMs > 0 && (ttlMs == 0 || result.TTLMs < ttlMs) {
-			ttlMs = result.TTLMs
+		if result.TTLMs != nil {
+			hint := max(*result.TTLMs, 0)
+			if ttlMs == nil || hint < *ttlMs {
+				ttlMs = &hint
+			}
 		}
 
 		for _, t := range result.Tools {
