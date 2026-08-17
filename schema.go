@@ -168,9 +168,11 @@ func coerceComplexFlag(name, typ, value string) (any, error) {
 
 // getToolSchema looks up a tool's schema from the cache and parses it into its
 // scalar params and array/object-typed params (name -> type). Returns an error
-// if the tool is not cached.
+// if the tool is not cached. Staleness is fine: the schema only types CLI
+// flags, and the server validates the arguments authoritatively — without
+// this, servers hinting ttlMs 0 would never get typed flags.
 func getToolSchema(serverName, toolName string) ([]toolParam, map[string]string, error) {
-	cached, err := loadCachedTools(serverName)
+	cached, err := loadCachedToolsStale(serverName)
 	if err != nil || cached == nil {
 		return nil, nil, fmt.Errorf("no cached schema for %s/%s", serverName, toolName)
 	}

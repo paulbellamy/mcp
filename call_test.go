@@ -177,7 +177,7 @@ func TestCallToolFlow(t *testing.T) {
 		},
 	}
 
-	output, err := executeToolCall(transport, "echo", map[string]any{"message": "test"}, false)
+	output, err := executeToolCall(transport, "echo", map[string]any{"message": "test"}, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestCallToolFlow_EmptyArguments(t *testing.T) {
 	}
 
 	// Call with no params at all (the empty-arguments case).
-	if _, err := executeToolCall(transport, "noargs", nil, false); err != nil {
+	if _, err := executeToolCall(transport, "noargs", nil, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !hadArguments {
@@ -227,7 +227,7 @@ func TestCallToolFlow_EmptyArguments(t *testing.T) {
 	// Also verify an empty (non-nil) map serializes the same way.
 	hadArguments = false
 	gotArguments = nil
-	if _, err := executeToolCall(transport, "noargs", map[string]any{}, false); err != nil {
+	if _, err := executeToolCall(transport, "noargs", map[string]any{}, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !hadArguments || string(gotArguments) != "{}" {
@@ -246,7 +246,7 @@ func TestCallToolFlow_JSONRPCError(t *testing.T) {
 		},
 	}
 
-	output, err := executeToolCall(transport, "bad-tool", nil, false)
+	output, err := executeToolCall(transport, "bad-tool", nil, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestCallToolFlow_Stream(t *testing.T) {
 		},
 	}
 
-	output, err := executeToolCall(transport, "slow-tool", nil, true)
+	output, err := executeToolCall(transport, "slow-tool", nil, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

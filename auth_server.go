@@ -64,6 +64,7 @@ func localOAuthFlow(
 			RedirectURI:             redirectURI,
 			ServerName:              name,
 			TokenEndpointAuthMethod: authMethod,
+			Issuer:                  authMeta.Issuer,
 		}
 
 		logStderr("exchanging authorization code for tokens...")
@@ -72,7 +73,7 @@ func localOAuthFlow(
 			return fmt.Errorf("token exchange failed: %w", err)
 		}
 
-		auth := tokensFromResponse(tokens, clientID, clientSecret, authMeta.TokenEndpoint, resource, authMethod)
+		auth := tokensFromResponse(tokens, clientID, clientSecret, authMeta.TokenEndpoint, resource, authMethod, authMeta.Issuer)
 
 		if err := saveAuth(name, auth); err != nil {
 			return fmt.Errorf("save auth: %w", err)

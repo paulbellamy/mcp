@@ -25,6 +25,7 @@ func TestHelpFlags(t *testing.T) {
 		{"tools", func() error { return cmdTools([]string{"--help"}) }, "Usage: mcp tools"},
 		{"auth", func() error { return cmdAuth([]string{"--help"}) }, "Usage: mcp auth"},
 		{"ping", func() error { return cmdPing([]string{"--help"}) }, "Usage: mcp ping"},
+		{"listen", func() error { return cmdListen([]string{"--help"}) }, "Usage: mcp listen"},
 		{"daemon", func() error { return cmdDaemon([]string{"--help"}) }, "Usage: mcp daemon"},
 	}
 

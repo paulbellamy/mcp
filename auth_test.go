@@ -161,14 +161,18 @@ func TestDiscoverOAuth_Metadata(t *testing.T) {
 
 func TestRegisterClient(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
 		var req clientRegistrationRequest
-		_ = json.NewDecoder(r.Body).Decode(&req)
+		_ = json.Unmarshal(body, &req)
 
 		if req.ClientName != "mcp-cli" {
 			t.Errorf("expected client name 'mcp-cli', got %q", req.ClientName)
 		}
 		if len(req.RedirectURIs) != 1 || req.RedirectURIs[0] != "http://localhost:8080/callback" {
 			t.Errorf("unexpected redirect URIs: %v", req.RedirectURIs)
+		}
+		if !strings.Contains(string(body), `"application_type":"native"`) {
+			t.Errorf("expected application_type native in registration body: %s", body)
 		}
 
 		w.WriteHeader(http.StatusCreated)
@@ -1306,5 +1310,661 @@ func TestRefreshOAuthToken_KeepsOldRefreshToken(t *testing.T) {
 	}
 	if refreshed.RefreshToken != "old-rt" {
 		t.Errorf("expected old refresh token to be preserved, got %q", refreshed.RefreshToken)
+	}
+}
+
+func TestAuthServerMetadata_ParsesCIMDFields(t *testing.T) {
+	var meta authServerMetadata
+	data := []byte(`{
+		"issuer": "https://as.example.com",
+		"authorization_endpoint": "https://as.example.com/authorize",
+		"token_endpoint": "https://as.example.com/token",
+		"client_id_metadata_document_supported": true
+	}`)
+	if err := json.Unmarshal(data, &meta); err != nil {
+		t.Fatal(err)
+	}
+	if meta.Issuer != "https://as.example.com" {
+		t.Errorf("issuer: got %q", meta.Issuer)
+	}
+	if !meta.ClientIDMetadataDocumentSupported {
+		t.Error("expected client_id_metadata_document_supported to parse as true")
+	}
+
+	var absent authServerMetadata
+	if err := json.Unmarshal([]byte(`{"issuer":"https://as.example.com"}`), &absent); err != nil {
+		t.Fatal(err)
+	}
+	if absent.ClientIDMetadataDocumentSupported {
+		t.Error("absent client_id_metadata_document_supported must default to false")
+	}
+}
+
+func TestDiscoverOAuth_IssuerFallsBackToAuthServerURL(t *testing.T) {
+	// AS metadata omits issuer -> discovery binds credentials to the AS URL
+	// that was used for discovery instead.
+	authSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/oauth-authorization-server" {
+			_ = json.NewEncoder(w).Encode(authServerMetadata{
+				AuthorizationEndpoint: "https://auth.example.com/authorize",
+				TokenEndpoint:         "https://auth.example.com/token",
+			})
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer authSrv.Close()
+
+	resourceSrv := newDiscoveryResourceServer(t, authSrv.URL)
+
+	_, meta, err := discoverOAuth(resourceSrv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Issuer != authSrv.URL {
+		t.Errorf("expected issuer fallback to AS URL %q, got %q", authSrv.URL, meta.Issuer)
+	}
+}
+
+func TestValidateClientMetadataURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr bool
+	}{
+		{"valid https with path", "https://client.example.com/mcp-client.json", false},
+		{"http scheme", "http://client.example.com/mcp-client.json", true},
+		{"missing path", "https://client.example.com", true},
+		{"root path", "https://client.example.com/", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateClientMetadataURL(tt.url)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for %q", tt.url)
+				}
+				if !strings.Contains(err.Error(), "client metadata URL") {
+					t.Errorf("expected error to name the client metadata URL, got: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// authTestAS is a mock authorization server with discovery, registration, and
+// token endpoints, recording what the client sent.
+type authTestAS struct {
+	srv         *httptest.Server
+	registerHit bool
+	tokenForm   url.Values
+	tokenBasic  bool
+}
+
+// newAuthTestAS stands up a mock authorization server. cimd controls whether
+// the metadata advertises client_id_metadata_document_supported.
+func newAuthTestAS(t *testing.T, cimd bool) *authTestAS {
+	return newAuthTestASMethods(t, cimd, []string{"client_secret_basic", "none"})
+}
+
+// newAuthTestASMethods is newAuthTestAS with a custom
+// token_endpoint_auth_methods_supported list.
+func newAuthTestASMethods(t *testing.T, cimd bool, methods []string) *authTestAS {
+	t.Helper()
+	as := &authTestAS{}
+	as.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			_ = json.NewEncoder(w).Encode(authServerMetadata{
+				Issuer:                            as.srv.URL,
+				AuthorizationEndpoint:             as.srv.URL + "/authorize",
+				TokenEndpoint:                     as.srv.URL + "/token",
+				RegistrationEndpoint:              as.srv.URL + "/register",
+				CodeChallengeMethodsSupported:     []string{"S256"},
+				TokenEndpointAuthMethodsSupported: methods,
+				ClientIDMetadataDocumentSupported: cimd,
+			})
+		case "/register":
+			as.registerHit = true
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(clientRegistrationResponse{
+				ClientID:     "dcr-cid",
+				ClientSecret: "dcr-secret",
+			})
+		case "/token":
+			_ = r.ParseForm()
+			as.tokenForm = r.Form
+			_, _, as.tokenBasic = r.BasicAuth()
+			_ = json.NewEncoder(w).Encode(tokenResponse{
+				AccessToken:  "new-at",
+				RefreshToken: "new-rt",
+				ExpiresIn:    3600,
+			})
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	t.Cleanup(as.srv.Close)
+	return as
+}
+
+// newDiscoveryResourceServer serves only the protected-resource metadata,
+// pointing at asURL.
+func newDiscoveryResourceServer(t *testing.T, asURL string) *httptest.Server {
+	t.Helper()
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/oauth-protected-resource" {
+			_ = json.NewEncoder(w).Encode(protectedResourceMetadata{
+				AuthorizationServers: []string{asURL},
+				Resource:             srv.URL,
+			})
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// newIssuerBoundResourceServer serves both the protected-resource metadata
+// (pointing at asURL) and a legacy MCP handshake that requires
+// Authorization: Bearer <wantToken>, so the cmdAuth idempotency probe can
+// succeed against it with stored credentials.
+func newIssuerBoundResourceServer(t *testing.T, wantToken, asURL string) *httptest.Server {
+	t.Helper()
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/oauth-protected-resource" {
+			_ = json.NewEncoder(w).Encode(protectedResourceMetadata{
+				AuthorizationServers: []string{asURL},
+				Resource:             srv.URL,
+			})
+			return
+		}
+
+		if r.Header.Get("Authorization") != "Bearer "+wantToken {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		body, _ := io.ReadAll(r.Body)
+		var raw map[string]json.RawMessage
+		_ = json.Unmarshal(body, &raw)
+		if _, hasID := raw["id"]; !hasID {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		var req jsonrpcRequest
+		_ = json.Unmarshal(body, &req)
+
+		var resp jsonrpcResponse
+		resp.JSONRPC = "2.0"
+		resp.ID = json.RawMessage(fmt.Sprintf("%d", req.ID))
+		if req.Method == "initialize" {
+			resp.Result, _ = json.Marshal(map[string]any{
+				"protocolVersion": "2025-03-26",
+				"capabilities":    map[string]any{},
+				"serverInfo":      map[string]string{"name": "mock"},
+			})
+		} else {
+			resp.Error = &jsonrpcError{Code: -32601, Message: "method not found"}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestCmdAuth_CIMD_SkipsRegistration(t *testing.T) {
+	setupTestConfigDir(t)
+
+	const metadataURL = "https://client.example.com/mcp-client.json"
+	as := newAuthTestAS(t, true)
+	resourceSrv := newDiscoveryResourceServer(t, as.srv.URL)
+
+	if err := addServerConfig(ServerConfig{
+		Name:      "test",
+		Transport: "streamable-http",
+		URL:       resourceSrv.URL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := runCmdAuthRelay(t,
+		[]string{"test", "--callback-url", "http://localhost:9999/cb"},
+		map[string]string{"MCP_CLIENT_METADATA_URL": metadataURL},
+	)
+
+	// The authorize URL carries the metadata URL as client_id.
+	parsed, err := url.Parse(out.AuthURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.Query().Get("client_id"); got != metadataURL {
+		t.Errorf("authorize client_id: got %q, want %q", got, metadataURL)
+	}
+
+	pending, _, err := findPendingAuthByNonce(out.Nonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending == nil {
+		t.Fatal("no pending auth persisted")
+	}
+	if pending.ClientID != metadataURL {
+		t.Errorf("pending client_id: got %q, want %q", pending.ClientID, metadataURL)
+	}
+	if pending.ClientSecret != "" {
+		t.Errorf("CIMD client must have no secret, got %q", pending.ClientSecret)
+	}
+	if pending.TokenEndpointAuthMethod != "none" {
+		t.Errorf("CIMD auth method must be none, got %q", pending.TokenEndpointAuthMethod)
+	}
+	if pending.Issuer != as.srv.URL {
+		t.Errorf("pending issuer: got %q, want %q", pending.Issuer, as.srv.URL)
+	}
+
+	// Complete the exchange: the token request must also carry the metadata
+	// URL as client_id (public client, no secret, no Basic auth).
+	t.Setenv("MCP_AUTH_CODE", "code-123")
+	captureStdout(t, func() {
+		if err := cmdAuthCallback([]string{"--nonce", out.Nonce}); err != nil {
+			t.Fatalf("cmdAuthCallback: %v", err)
+		}
+	})
+
+	if got := as.tokenForm.Get("client_id"); got != metadataURL {
+		t.Errorf("token client_id: got %q, want %q", got, metadataURL)
+	}
+	if as.tokenForm.Get("client_secret") != "" {
+		t.Error("CIMD token request must not carry a client_secret")
+	}
+	if as.tokenBasic {
+		t.Error("CIMD token request must not use Basic auth")
+	}
+	if as.registerHit {
+		t.Error("CIMD flow must not call the registration endpoint")
+	}
+
+	saved, err := loadAuth("test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved == nil || saved.AccessToken != "new-at" {
+		t.Fatalf("unexpected saved tokens: %+v", saved)
+	}
+	if saved.ClientID != metadataURL {
+		t.Errorf("saved client_id: got %q, want %q", saved.ClientID, metadataURL)
+	}
+	if saved.Issuer != as.srv.URL {
+		t.Errorf("saved issuer: got %q, want %q", saved.Issuer, as.srv.URL)
+	}
+}
+
+func TestCmdAuth_CIMD_IgnoredWithoutServerSupport(t *testing.T) {
+	setupTestConfigDir(t)
+
+	as := newAuthTestAS(t, false)
+	resourceSrv := newDiscoveryResourceServer(t, as.srv.URL)
+
+	if err := addServerConfig(ServerConfig{
+		Name:      "test",
+		Transport: "streamable-http",
+		URL:       resourceSrv.URL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Metadata URL set but the AS does not advertise CIMD support -> DCR.
+	out := runCmdAuthRelay(t,
+		[]string{"test", "--callback-url", "http://localhost:9999/cb"},
+		map[string]string{"MCP_CLIENT_METADATA_URL": "https://client.example.com/mcp-client.json"},
+	)
+
+	if !as.registerHit {
+		t.Error("expected dynamic registration when AS does not support CIMD")
+	}
+	pending, _, err := findPendingAuthByNonce(out.Nonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending == nil {
+		t.Fatal("no pending auth persisted")
+	}
+	if pending.ClientID != "dcr-cid" {
+		t.Errorf("expected registered client id, got %q", pending.ClientID)
+	}
+}
+
+func TestCmdAuth_InvalidClientMetadataURL_ErrorsBeforeNetwork(t *testing.T) {
+	setupTestConfigDir(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request %s %s before client metadata URL validation", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	if err := addServerConfig(ServerConfig{
+		Name:      "test",
+		Transport: "streamable-http",
+		URL:       srv.URL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, bad := range []string{
+		"http://client.example.com/mcp-client.json",
+		"https://client.example.com",
+		"https://client.example.com/",
+	} {
+		t.Run(bad, func(t *testing.T) {
+			t.Setenv("MCP_CLIENT_METADATA_URL", bad)
+			err := cmdAuth([]string{"test"})
+			if err == nil {
+				t.Fatal("expected error for invalid client metadata URL")
+			}
+			if !strings.Contains(err.Error(), "client metadata URL") {
+				t.Errorf("expected error to name the client metadata URL, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestGetAuthToken_RefreshBlockedOnIssuerChange(t *testing.T) {
+	setupTestConfigDir(t)
+
+	tokenHit := false
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tokenHit = true
+		_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "refreshed-at", ExpiresIn: 3600})
+	}))
+	t.Cleanup(tokenSrv.Close)
+
+	// Discovery now reports a different issuer than the stored binding.
+	as := newAuthTestAS(t, false)
+	resourceSrv := newDiscoveryResourceServer(t, as.srv.URL)
+
+	if err := addServerConfig(ServerConfig{
+		Name:      "test",
+		Transport: "streamable-http",
+		URL:       resourceSrv.URL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := saveAuth("test", &AuthTokens{
+		AccessToken:  "stale-at",
+		RefreshToken: "rt-1",
+		ExpiresAt:    time.Now().Unix() - 100,
+		ClientID:     "old-cid",
+		TokenURL:     tokenSrv.URL,
+		Issuer:       "https://old-issuer.example.com",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var token string
+	stderr := captureStderr(t, func() {
+		var err error
+		token, err = getAuthToken("test")
+		if err != nil {
+			t.Fatalf("getAuthToken: %v", err)
+		}
+	})
+
+	// Refresh refused: the stale token is returned and the old credentials
+	// were not replayed against the token endpoint.
+	if token != "stale-at" {
+		t.Errorf("expected stale token to be returned, got %q", token)
+	}
+	if tokenHit {
+		t.Error("refresh token must not be sent when the issuer changed")
+	}
+	if !strings.Contains(stderr, "authorization server changed") {
+		t.Errorf("expected issuer-change warning on stderr, got: %q", stderr)
+	}
+}
+
+func TestGetAuthToken_RefreshProceedsOnMatchingIssuer(t *testing.T) {
+	setupTestConfigDir(t)
+
+	as := newAuthTestAS(t, false)
+	resourceSrv := newDiscoveryResourceServer(t, as.srv.URL)
+
+	if err := addServerConfig(ServerConfig{
+		Name:      "test",
+		Transport: "streamable-http",
+		URL:       resourceSrv.URL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := saveAuth("test", &AuthTokens{
+		AccessToken:  "stale-at",
+		RefreshToken: "rt-1",
+		ExpiresAt:    time.Now().Unix() - 100,
+		ClientID:     "cid",
+		TokenURL:     as.srv.URL + "/token",
+		Issuer:       as.srv.URL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	token, err := getAuthToken("test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "new-at" {
+		t.Errorf("expected refreshed token, got %q", token)
+	}
+}
+
+func TestGetAuthToken_EmptyStoredIssuerSkipsDiscovery(t *testing.T) {
+	setupTestConfigDir(t)
+
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "refreshed-at", ExpiresIn: 3600})
+	}))
+	t.Cleanup(tokenSrv.Close)
+
+	// Legacy tokens (saved before issuer binding) must refresh without any
+	// discovery round-trip.
+	resourceSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected discovery request %s for legacy tokens", r.URL.Path)
+		w.WriteHeader(404)
+	}))
+	t.Cleanup(resourceSrv.Close)
+
+	if err := addServerConfig(ServerConfig{
+		Name:      "test",
+		Transport: "streamable-http",
+		URL:       resourceSrv.URL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := saveAuth("test", &AuthTokens{
+		AccessToken:  "stale-at",
+		RefreshToken: "rt-1",
+		ExpiresAt:    time.Now().Unix() - 100,
+		ClientID:     "cid",
+		TokenURL:     tokenSrv.URL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	token, err := getAuthToken("test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "refreshed-at" {
+		t.Errorf("expected legacy tokens to refresh, got %q", token)
+	}
+}
+
+func TestCmdAuth_IssuerMismatch_ForcesReRegistration(t *testing.T) {
+	setupTestConfigDir(t)
+
+	as := newAuthTestAS(t, false)
+	// The MCP server still accepts the stored token, so without issuer
+	// binding cmdAuth would short-circuit as "already connected".
+	resourceSrv := newIssuerBoundResourceServer(t, "old-at", as.srv.URL)
+
+	if err := addServerConfig(ServerConfig{
+		Name:      "test",
+		Transport: "streamable-http",
+		URL:       resourceSrv.URL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := saveAuth("test", &AuthTokens{
+		AccessToken: "old-at",
+		ClientID:    "old-cid",
+		Issuer:      "https://old-issuer.example.com",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := runCmdAuthRelay(t, []string{"test", "--callback-url", "http://localhost:9999/cb"}, nil)
+
+	if out.Status != "pending" {
+		t.Errorf("expected a fresh auth flow after issuer change, got status %q", out.Status)
+	}
+	if !as.registerHit {
+		t.Error("expected re-registration after issuer change")
+	}
+	pending, _, err := findPendingAuthByNonce(out.Nonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending == nil {
+		t.Fatal("no pending auth persisted")
+	}
+	if pending.ClientID != "dcr-cid" {
+		t.Errorf("old client credentials must not be reused, got client_id %q", pending.ClientID)
+	}
+	if pending.Issuer != as.srv.URL {
+		t.Errorf("pending issuer: got %q, want %q", pending.Issuer, as.srv.URL)
+	}
+}
+
+func TestCmdAuth_IssuerMatch_StaysIdempotent(t *testing.T) {
+	setupTestConfigDir(t)
+
+	as := newAuthTestAS(t, false)
+	resourceSrv := newIssuerBoundResourceServer(t, "old-at", as.srv.URL)
+
+	if err := addServerConfig(ServerConfig{
+		Name:      "test",
+		Transport: "streamable-http",
+		URL:       resourceSrv.URL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := saveAuth("test", &AuthTokens{
+		AccessToken: "old-at",
+		ClientID:    "old-cid",
+		Issuer:      as.srv.URL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := runCmdAuthRelay(t, []string{"test", "--callback-url", "http://localhost:9999/cb"}, nil)
+
+	if out.Status != "complete" {
+		t.Errorf("expected already-connected short-circuit for matching issuer, got %q", out.Status)
+	}
+	if as.registerHit {
+		t.Error("matching issuer must not trigger re-registration")
+	}
+	var pending PendingAuth
+	if found, _ := readJSON(pendingAuthPath("test"), &pending); found {
+		t.Error("expected no pending auth file for already-connected server")
+	}
+}
+
+func TestCmdAuth_EmptyStoredIssuer_LegacyTolerance(t *testing.T) {
+	setupTestConfigDir(t)
+
+	as := newAuthTestAS(t, false)
+	resourceSrv := newIssuerBoundResourceServer(t, "old-at", as.srv.URL)
+
+	if err := addServerConfig(ServerConfig{
+		Name:      "test",
+		Transport: "streamable-http",
+		URL:       resourceSrv.URL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Tokens saved before the issuer field existed keep working unchecked.
+	if err := saveAuth("test", &AuthTokens{
+		AccessToken: "old-at",
+		ClientID:    "old-cid",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := runCmdAuthRelay(t, []string{"test", "--callback-url", "http://localhost:9999/cb"}, nil)
+
+	if out.Status != "complete" {
+		t.Errorf("expected legacy tokens without issuer to be reused, got %q", out.Status)
+	}
+	if as.registerHit {
+		t.Error("legacy tokens must not trigger re-registration")
+	}
+}
+
+func TestCmdAuth_CIMD_WorksWithUnsupportedTokenAuthMethods(t *testing.T) {
+	// CIMD is a public client (PKCE, auth method "none") and must not be
+	// blocked by an AS whose token_endpoint_auth_methods_supported lists
+	// only methods the CLI cannot do (e.g. private_key_jwt).
+	setupTestConfigDir(t)
+
+	const metadataURL = "https://client.example.com/mcp-client.json"
+	as := newAuthTestASMethods(t, true, []string{"private_key_jwt"})
+	resourceSrv := newDiscoveryResourceServer(t, as.srv.URL)
+
+	if err := addServerConfig(ServerConfig{
+		Name:      "test",
+		Transport: "streamable-http",
+		URL:       resourceSrv.URL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := runCmdAuthRelay(t,
+		[]string{"test", "--callback-url", "http://localhost:9999/cb"},
+		map[string]string{"MCP_CLIENT_METADATA_URL": metadataURL},
+	)
+
+	parsed, err := url.Parse(out.AuthURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.Query().Get("client_id"); got != metadataURL {
+		t.Errorf("authorize client_id: got %q, want %q", got, metadataURL)
+	}
+	if as.registerHit {
+		t.Error("CIMD path must not hit the registration endpoint")
+	}
+
+	pending, _, err := findPendingAuthByNonce(out.Nonce)
+	if err != nil || pending == nil {
+		t.Fatalf("pending auth: %v, %v", pending, err)
+	}
+	if pending.TokenEndpointAuthMethod != "none" {
+		t.Errorf("CIMD auth method must be none, got %q", pending.TokenEndpointAuthMethod)
 	}
 }

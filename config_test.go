@@ -332,7 +332,7 @@ func TestToolCacheSaveLoadTTL(t *testing.T) {
 		{Server: "test", Name: "tool1", Description: "desc1"},
 		{Server: "test", Name: "tool2", Description: "desc2"},
 	}
-	if err := saveCachedTools("test", toolList); err != nil {
+	if err := saveCachedTools("test", toolList, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -421,5 +421,71 @@ func TestValidateToolName(t *testing.T) {
 		if err := validateToolName(name); err == nil {
 			t.Errorf("expected %q to be invalid", name)
 		}
+	}
+}
+
+func i64(v int64) *int64 { return &v }
+
+func TestLoadCachedTools_ServerTTLBoundsFreshness(t *testing.T) {
+	setupTestConfigDir(t)
+	toolList := []toolOutput{{Server: "s", Name: "tool1"}}
+
+	// A short server ttlMs (2026-07-28 hint) expires the cache before the
+	// 10-minute default would.
+	if err := writeJSON(cachePath("short"), ToolCache{
+		Tools:    toolList,
+		CachedAt: time.Now().Add(-5 * time.Second).Unix(),
+		TTLMs:    i64(1000),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if tools, err := loadCachedTools("short"); err != nil || tools != nil {
+		t.Errorf("expected stale cache under server ttlMs, got %v, %v", tools, err)
+	}
+
+	// Fresh within the server ttl still loads.
+	if err := writeJSON(cachePath("fresh"), ToolCache{
+		Tools:    toolList,
+		CachedAt: time.Now().Unix(),
+		TTLMs:    i64(60000),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if tools, err := loadCachedTools("fresh"); err != nil || len(tools) != 1 {
+		t.Errorf("expected fresh cache, got %v, %v", tools, err)
+	}
+
+	// A huge server ttlMs cannot extend past the default cap.
+	if err := writeJSON(cachePath("capped"), ToolCache{
+		Tools:    toolList,
+		CachedAt: time.Now().Add(-11 * time.Minute).Unix(),
+		TTLMs:    i64(24 * 60 * 60 * 1000),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if tools, err := loadCachedTools("capped"); err != nil || tools != nil {
+		t.Errorf("expected default TTL cap to win, got %v, %v", tools, err)
+	}
+
+	// An explicit ttlMs of 0 means immediately stale (the live Cloudflare
+	// docs server sends this; SDKs default to it), no matter how fresh the
+	// write is. Only the stale-tolerant loader may serve it.
+	if err := saveCachedTools("zero", toolList, i64(0)); err != nil {
+		t.Fatal(err)
+	}
+	if tools, err := loadCachedTools("zero"); err != nil || tools != nil {
+		t.Errorf("expected explicit ttlMs=0 to be immediately stale, got %v, %v", tools, err)
+	}
+	if tools, err := loadCachedToolsStale("zero"); err != nil || len(tools) != 1 {
+		t.Errorf("expected stale loader to still serve ttlMs=0 cache, got %v, %v", tools, err)
+	}
+
+	// Absent hint (nil): the 10-minute default applies and a fresh write
+	// loads normally.
+	if err := saveCachedTools("nohint", toolList, nil); err != nil {
+		t.Fatal(err)
+	}
+	if tools, err := loadCachedTools("nohint"); err != nil || len(tools) != 1 {
+		t.Errorf("expected default TTL for absent hint, got %v, %v", tools, err)
 	}
 }
