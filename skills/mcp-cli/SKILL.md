@@ -14,9 +14,7 @@ All commands run via bash. Output is JSON on stdout, logs on stderr.
 `mcp__<server>__<tool>` in your tool list, call it natively. Otherwise, use
 this CLI.
 
-**Available servers:**
-
-!`mcp servers`
+Run `mcp servers` to see which servers are already configured.
 
 **Use this skill when:**
 - The tool you need is not in your native tool list (server isn't loaded, or
