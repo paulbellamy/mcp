@@ -72,6 +72,17 @@ claude plugin marketplace add https://github.com/paulbellamy/mcp
 claude plugin install mcp-cli
 ```
 
+### Pi
+
+[Pi](https://pi.dev/) ships without built-in MCP support, so this CLI is a
+natural fit. The repo is a [Pi package](https://pi.dev/docs/latest/packages):
+installing it registers the `mcp-cli` skill and an extension that downloads the
+`mcp` binary on first session start.
+
+```bash
+pi install git:github.com/paulbellamy/mcp
+```
+
 ### Binary
 
 ```bash

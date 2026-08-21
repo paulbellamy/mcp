@@ -1,0 +1,14 @@
+{
+  "name": "@paulbellamy/mcp-cli",
+  "version": "0.10.0",
+  "description": "Connect to and use external MCP tool servers via the mcp CLI",
+  "keywords": ["pi-package", "mcp", "cli"],
+  "license": "MIT",
+  "homepage": "https://github.com/paulbellamy/mcp",
+  "repository": "github:paulbellamy/mcp",
+  "author": "Paul Bellamy",
+  "pi": {
+    "skills": ["./skills"],
+    "extensions": ["./extensions"]
+  }
+}
