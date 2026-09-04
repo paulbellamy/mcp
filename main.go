@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 )
 
 func main() {
@@ -78,7 +79,7 @@ func printUsage() {
 
 Commands:
   servers                        List configured servers
-  add <name> <url>               Add an HTTP server
+  add <name> <url> [--header ..] Add an HTTP server (--header/-H repeatable)
   add <name> --stdio <cmd> ...   Add a stdio server
   remove <name>                  Remove a server
   enable <name>                  Enable a server
@@ -210,43 +211,85 @@ Disable a server without removing it from the config.`)
 	return nil
 }
 
-// cmdAdd handles the `mcp add` command.
-func cmdAdd(args []string) error {
-	for _, arg := range args {
-		if arg == "--help" || arg == "-h" {
-			fmt.Fprintln(os.Stderr, `Usage: mcp add <name> <url>
+const addUsage = `Usage: mcp add <name> <url> [--header "Name: Value"]...
        mcp add <name> --stdio <command> [args...]
 
 Add a server to the config. HTTP servers are given a URL; stdio servers are
-launched via a local command. Tools are discovered immediately when reachable.`)
+launched via a local command. Tools are discovered immediately when reachable.
+
+Options (HTTP only):
+  --header, -H "Name: Value"   Static header sent on every request (repeatable).
+                               Values may reference env vars as ${VAR}, expanded
+                               at request time so secrets stay out of the config.`
+
+// cmdAdd handles the `mcp add` command.
+func cmdAdd(args []string) error {
+	// Parse flags up to an optional --stdio boundary. Everything after
+	// --stdio is the child command, taken literally (so a command's own -H or
+	// -h is never mistaken for a flag of `mcp add`).
+	var positionals, headerFlags, stdioCmd []string
+	stdio := false
+	for i := 0; i < len(args); {
+		a := args[i]
+		switch {
+		case a == "--help" || a == "-h":
+			fmt.Fprintln(os.Stderr, addUsage)
 			return nil
+		case a == "--stdio":
+			stdio = true
+			stdioCmd = args[i+1:]
+			i = len(args)
+		case a == "--header" || a == "-H":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--header requires a \"Name: Value\" argument")
+			}
+			headerFlags = append(headerFlags, args[i+1])
+			i += 2
+		case strings.HasPrefix(a, "--header="):
+			headerFlags = append(headerFlags, strings.TrimPrefix(a, "--header="))
+			i++
+		case strings.HasPrefix(a, "-H="):
+			headerFlags = append(headerFlags, strings.TrimPrefix(a, "-H="))
+			i++
+		default:
+			positionals = append(positionals, a)
+			i++
 		}
 	}
 
-	if len(args) < 2 {
+	if len(positionals) < 1 {
 		return fmt.Errorf("usage: mcp add <name> <url>  or  mcp add <name> --stdio <command> [args...]")
 	}
-
-	name := args[0]
+	name := positionals[0]
 	if err := validateServerName(name); err != nil {
 		return err
 	}
 
-	if args[1] == "--stdio" {
-		if len(args) < 3 {
+	if stdio {
+		if len(headerFlags) > 0 {
+			return fmt.Errorf("--header is only supported for HTTP servers")
+		}
+		if len(stdioCmd) < 1 {
 			return fmt.Errorf("usage: mcp add <name> --stdio <command> [args...]")
 		}
 		return addServer(ServerConfig{
 			Name:      name,
 			Transport: "stdio",
-			Command:   args[2],
-			Args:      args[3:],
+			Command:   stdioCmd[0],
+			Args:      stdioCmd[1:],
 		}, "")
 	}
 
 	// HTTP mode
-	serverURL := args[1]
+	if len(positionals) < 2 {
+		return fmt.Errorf("usage: mcp add <name> <url> [--header \"Name: Value\"]...")
+	}
+	serverURL := positionals[1]
 	if err := validateEndpointURL(serverURL, "MCP server"); err != nil {
+		return err
+	}
+	headers, err := parseHeaderFlags(headerFlags)
+	if err != nil {
 		return err
 	}
 	authToken, err := getAuthToken(name)
@@ -257,6 +300,7 @@ launched via a local command. Tools are discovered immediately when reachable.`)
 		Name:      name,
 		Transport: "streamable-http",
 		URL:       serverURL,
+		Headers:   headers,
 	}, authToken)
 }
 

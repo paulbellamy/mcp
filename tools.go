@@ -47,7 +47,15 @@ func mcpConnectOpts(server *ServerConfig, authToken string, timeout time.Duratio
 		}
 		transport, err = NewStdioTransport(server.Command, server.Args)
 	case "streamable-http":
-		transport = NewHTTPTransport(server.URL, authToken)
+		ht := NewHTTPTransport(server.URL, authToken)
+		if len(server.Headers) > 0 {
+			resolved, herr := resolveHeaders(server.Headers)
+			if herr != nil {
+				return nil, fmt.Errorf("configured headers: %w", herr)
+			}
+			ht.setHeaders(resolved)
+		}
+		transport = ht
 	default:
 		return nil, fmt.Errorf("unsupported transport %q", server.Transport)
 	}

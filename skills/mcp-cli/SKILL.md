@@ -61,7 +61,19 @@ mcp add <name> <url>
 
 # Stdio server (spawns a local process)
 mcp add <name> --stdio <command> [args...]
+
+# HTTP server with static headers (repeatable; --header or -H). Use for
+# enterprise servers authenticated by a fixed key + org id rather than OAuth.
+# Values may reference env vars as ${VAR}, expanded per request so secrets
+# stay out of servers.json:
+mcp add devin https://mcp.devin.ai/mcp \
+  --header "Authorization: Bearer ${DEVIN_API_KEY}" \
+  --header "X-Org-Id: ${DEVIN_ORG_ID}"
 ```
+Headers are sent on every request to that server (tools/list, call, ping, …).
+A configured `Authorization` header is used only when the server has no OAuth
+token; the token wins if both exist. To change headers, re-run `mcp add` with
+the new `--header` flags. Headers apply to HTTP servers only, not stdio.
 
 ### Discover tools (compact summaries)
 ```bash

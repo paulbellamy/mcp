@@ -64,6 +64,12 @@ type ServerConfig struct {
 	Command   string   `json:"command,omitempty"`
 	Args      []string `json:"args,omitempty"`
 	Enabled   *bool    `json:"enabled,omitempty"` // nil or true = enabled
+	// Headers are arbitrary static HTTP headers sent on every request to an
+	// HTTP (streamable-http) server — e.g. an enterprise API key and org id
+	// that isn't served by the OAuth flow. Keys are canonicalized. Values may
+	// reference environment variables as ${VAR}, expanded at request time so
+	// secrets need not be written to disk. Ignored for stdio servers.
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // IsEnabled returns whether the server is enabled (default true).
