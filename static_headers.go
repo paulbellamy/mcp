@@ -62,6 +62,23 @@ func parseHeaderFlags(raw []string) (map[string]string, error) {
 	return headers, nil
 }
 
+// splitEnvHeaders splits the MCP_HEADERS env value into individual header
+// flags, one "Name: Value" per line. Blank lines are ignored so the variable
+// reads naturally in a shell heredoc or a .env file.
+func splitEnvHeaders(v string) []string {
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(v, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
 // resolveHeaders expands ${VAR} references and validates each value, yielding
 // the concrete headers to put on the wire. A nil/empty input returns a nil
 // map (no headers). An unset referenced variable, or a value that is not a

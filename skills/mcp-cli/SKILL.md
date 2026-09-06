@@ -73,7 +73,22 @@ mcp add devin https://mcp.devin.ai/mcp \
 Headers are sent on every request to that server (tools/list, call, ping, …).
 A configured `Authorization` header is used only when the server has no OAuth
 token; the token wins if both exist. To change headers, re-run `mcp add` with
-the new `--header` flags. Headers apply to HTTP servers only, not stdio.
+the new `--header` flags.
+
+Headers apply to HTTP servers only. For a **stdio** server, the launched
+command may have its own header flag — pass it after `--stdio` and it reaches
+the command verbatim:
+```bash
+mcp add wrapped --stdio some-mcp-cli --header "X-Org-Id: acme"
+```
+
+For an **ad-hoc URL** (no `mcp add`), supply headers via the `MCP_HEADERS`
+environment variable — one `Name: Value` per line — and they apply to every
+ad-hoc command:
+```bash
+MCP_HEADERS="Authorization: Bearer ${DEVIN_API_KEY}
+X-Org-Id: ${DEVIN_ORG_ID}" mcp tools https://mcp.devin.ai/mcp
+```
 
 ### Discover tools (compact summaries)
 ```bash

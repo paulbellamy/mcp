@@ -29,8 +29,29 @@ mcp add <name> <url> [--header "Name: Value"]...    # -H is an alias
   everything after the first colon, so colons in the value are fine).
 - Names must be valid HTTP tokens and are canonicalized; later duplicates
   override earlier ones.
-- HTTP only. `--header` with `--stdio` is an error.
 - To change headers, re-run `mcp add` (an upsert) with the new flags.
+
+### stdio servers
+
+A stdio server has no HTTP layer, so `--header` is not an `mcp add` option for
+it. But a stdio *command* may define its own header flag — that is just one of
+its arguments: everything after `--stdio` is the child's argv, passed verbatim,
+so `mcp add w --stdio some-cli --header "X: y"` gives `some-cli` the
+`--header "X: y"` flag. `--header` placed *before* `--stdio` is rejected with a
+message pointing at the correct placement (it would otherwise be silently
+dropped, since there is no HTTP request to attach it to).
+
+### ad-hoc URLs
+
+Ad-hoc URL commands (`mcp tools <url>`, `call`, `resources`, `read`, `ping`,
+`listen`) have no config entry, so a `--header` flag has nowhere to live — and
+on `mcp call` it would collide with the `--<param>` tool-argument flags. Static
+headers for ad-hoc URLs therefore come from the `MCP_HEADERS` environment
+variable (one `Name: Value` per line), the counterpart to `MCP_AUTH_TOKEN`.
+It is parsed in `resolveServer`'s URL branch through the same
+`parseHeaderFlags`/`resolveHeaders` pipeline, so `${VAR}` expansion and
+validation behave identically to configured headers, and every ad-hoc command
+picks them up for free.
 
 ## Environment interpolation
 
@@ -63,7 +84,10 @@ sent as-is; a bare `$` or `$NAME` without braces is left literal.
 - `config.go`: `ServerConfig.Headers`.
 - `static_headers.go` (new): `parseHeaderFlag`/`parseHeaderFlags` (flag →
   canonical map, reusing `validHeaderToken`), `resolveHeaders` (env expansion +
-  field-value validation), `expandHeaderEnv`, `validateHeaderValue`.
+  field-value validation), `expandHeaderEnv`, `validateHeaderValue`,
+  `splitEnvHeaders` (MCP_HEADERS lines → flags).
+- `config.go` `resolveServer`: for an ad-hoc URL, parse `MCP_HEADERS` into the
+  synthesized `ServerConfig.Headers`.
 - `transport.go`: `HTTPTransport.headers`, `setHeaders`, `applyStaticHeaders`;
   applied in `sendWithContext`, `Notify`, and `Close` (DELETE).
 - `tools.go` `mcpConnectOpts`: resolve `server.Headers` and set them on the

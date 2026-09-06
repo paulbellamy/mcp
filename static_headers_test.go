@@ -275,9 +275,89 @@ func TestCmdAdd_Headers_EndToEnd(t *testing.T) {
 
 func TestCmdAdd_Headers_RejectedForStdio(t *testing.T) {
 	setupTestConfigDir(t)
+	// --header BEFORE --stdio is meaningless (stdio has no HTTP headers).
 	err := cmdAdd([]string{"foo", "-H", "X-Org-Id: acme", "--stdio", "echo", "hi"})
 	if err == nil {
-		t.Fatal("expected error: --header with --stdio")
+		t.Fatal("expected error: --header before --stdio")
+	}
+}
+
+func TestCmdAdd_Stdio_ChildFlagsPassThrough(t *testing.T) {
+	setupTestConfigDir(t)
+	// A stdio command's own --header (or any flag) placed AFTER --stdio is part
+	// of its argv and must reach it verbatim, never consumed by `mcp add`.
+	_ = captureStderr(t, func() {
+		// Nonexistent command: discovery fails fast (tolerated) without a
+		// 60s stdio handshake timeout.
+		if err := cmdAdd([]string{"wrapped", "--stdio", "mcp-nonexistent-test-cmd",
+			"--header", "X-Org-Id: acme", "-H", "Authorization: Bearer k"}); err != nil {
+			t.Fatalf("cmdAdd: %v", err)
+		}
+	})
+	cfg, err := getServerConfig("wrapped")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Transport != "stdio" || cfg.Command != "mcp-nonexistent-test-cmd" {
+		t.Fatalf("unexpected config: %+v", cfg)
+	}
+	want := []string{"--header", "X-Org-Id: acme", "-H", "Authorization: Bearer k"}
+	if fmt.Sprint(cfg.Args) != fmt.Sprint(want) {
+		t.Errorf("child args = %v, want %v", cfg.Args, want)
+	}
+	if len(cfg.Headers) != 0 {
+		t.Errorf("stdio server must not carry HTTP headers, got %v", cfg.Headers)
+	}
+}
+
+func TestResolveServer_AdhocHeadersFromEnv(t *testing.T) {
+	t.Setenv("TEST_ADHOC_KEY", "cog_adhoc")
+	t.Setenv("MCP_HEADERS", "X-Org-Id: acme\nAuthorization: Bearer ${TEST_ADHOC_KEY}\n\n")
+
+	server, _, err := resolveServer("https://example.com/mcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Stored raw (env ref preserved); expansion happens at connect time.
+	if server.Headers["X-Org-Id"] != "acme" {
+		t.Errorf("X-Org-Id = %q", server.Headers["X-Org-Id"])
+	}
+	if server.Headers["Authorization"] != "Bearer ${TEST_ADHOC_KEY}" {
+		t.Errorf("Authorization = %q", server.Headers["Authorization"])
+	}
+}
+
+func TestAdhoc_Headers_EndToEnd(t *testing.T) {
+	t.Setenv("TEST_ADHOC_KEY", "cog_adhoc_secret")
+	srv, rec := newRecordingModernServer(t)
+	defer srv.Close()
+	t.Setenv("MCP_HEADERS", "X-Org-Id: acme\nAuthorization: Bearer ${TEST_ADHOC_KEY}")
+
+	// Ad-hoc URL: no config entry, headers sourced from MCP_HEADERS.
+	server, authToken, err := resolveServer(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport, err := mcpConnect(server, authToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = transport.Close() }()
+	if _, _, err := listAllTools(transport, "adhoc"); err != nil {
+		t.Fatal(err)
+	}
+	if got := rec.get("X-Org-Id"); got != "acme" {
+		t.Errorf("server X-Org-Id = %q", got)
+	}
+	if got := rec.get("Authorization"); got != "Bearer cog_adhoc_secret" {
+		t.Errorf("server Authorization = %q", got)
+	}
+}
+
+func TestResolveServer_AdhocBadHeaderErrors(t *testing.T) {
+	t.Setenv("MCP_HEADERS", "not-a-valid-header-line")
+	if _, _, err := resolveServer("https://example.com/mcp"); err == nil {
+		t.Fatal("expected error for malformed MCP_HEADERS")
 	}
 }
 

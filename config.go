@@ -263,7 +263,14 @@ func resolveServer(nameOrURL string) (*ServerConfig, string, error) {
 		if err := validateEndpointURL(nameOrURL, "MCP server"); err != nil {
 			return nil, "", err
 		}
-		return &ServerConfig{Transport: "streamable-http", URL: nameOrURL}, os.Getenv("MCP_AUTH_TOKEN"), nil
+		// Ad-hoc URLs have no config entry, so static headers come from the
+		// MCP_HEADERS env var (newline-separated "Name: Value" lines) — the
+		// counterpart to MCP_AUTH_TOKEN for enterprise servers reached by URL.
+		headers, err := parseHeaderFlags(splitEnvHeaders(os.Getenv("MCP_HEADERS")))
+		if err != nil {
+			return nil, "", fmt.Errorf("MCP_HEADERS: %w", err)
+		}
+		return &ServerConfig{Transport: "streamable-http", URL: nameOrURL, Headers: headers}, os.Getenv("MCP_AUTH_TOKEN"), nil
 	}
 	if err := validateServerName(nameOrURL); err != nil {
 		return nil, "", err

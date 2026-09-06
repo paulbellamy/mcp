@@ -160,6 +160,12 @@ mcp ping https://api.example.com/mcp
 # Authenticate with a token for ad-hoc URLs
 MCP_AUTH_TOKEN=<token> mcp call https://api.example.com/mcp <tool> --params '{}'
 
+# Static headers for ad-hoc URLs (no `add` needed): one "Name: Value" per
+# line in MCP_HEADERS. Values may reference env vars as ${VAR}. Works for
+# every ad-hoc command (tools, call, resources, read, ping, listen).
+MCP_HEADERS="Authorization: Bearer ${DEVIN_API_KEY}
+X-Org-Id: ${DEVIN_ORG_ID}" mcp tools https://mcp.devin.ai/mcp
+
 # Ping / remove
 mcp ping <server>
 mcp remove <name>

@@ -135,6 +135,8 @@ Auth flags:
 
 Environment:
   MCP_AUTH_TOKEN               Bearer token (use instead of OAuth flow)
+  MCP_HEADERS                  Static headers for ad-hoc URL calls, one
+                               "Name: Value" per line (${VAR} expanded)
   MCP_AUTH_CODE                Authorization code (set by gateway for OAuth callback)
   MCP_CLIENT_ID                OAuth client ID (for static client credentials)
   MCP_CLIENT_SECRET            OAuth client secret (for static client credentials)
@@ -267,7 +269,7 @@ func cmdAdd(args []string) error {
 
 	if stdio {
 		if len(headerFlags) > 0 {
-			return fmt.Errorf("--header is only supported for HTTP servers")
+			return fmt.Errorf("--header applies to HTTP servers only; a stdio command's own flags (including its own --header) go after --stdio and are passed to it verbatim")
 		}
 		if len(stdioCmd) < 1 {
 			return fmt.Errorf("usage: mcp add <name> --stdio <command> [args...]")
