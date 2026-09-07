@@ -297,6 +297,9 @@ type HTTPTransport struct {
 	authToken string
 	client    *http.Client
 	sessionID string
+	// Set once before the first Send and never mutated, so reads need no lock.
+	// A configured Authorization stands only when authToken is empty.
+	headers map[string]string
 
 	// mu guards the fields below. SetTimeout and setProtocolVersion may be
 	// called from a different goroutine than Send/SendStreaming.
@@ -319,6 +322,18 @@ func NewHTTPTransport(url string, authToken string) *HTTPTransport {
 		client:         &http.Client{CheckRedirect: checkSafeRedirect},
 		requestTimeout: defaultHTTPSendTimeout,
 		streamTimeout:  defaultHTTPStreamTimeout,
+	}
+}
+
+func (t *HTTPTransport) setHeaders(h map[string]string) {
+	t.headers = h
+}
+
+// Applied before the protocol framing headers so a stray configured header
+// cannot clobber what the transport depends on.
+func (t *HTTPTransport) applyStaticHeaders(h http.Header) {
+	for k, v := range t.headers {
+		h.Set(k, v)
 	}
 }
 
@@ -368,6 +383,7 @@ func (t *HTTPTransport) sendWithContext(ctx context.Context, req jsonrpcRequest,
 		return jsonrpcResponse{}, fmt.Errorf("create request: %w", err)
 	}
 
+	t.applyStaticHeaders(httpReq.Header)
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json, text/event-stream")
 	if t.authToken != "" {
@@ -598,6 +614,7 @@ func (t *HTTPTransport) Notify(notif jsonrpcNotification) error {
 		return fmt.Errorf("create request: %w", err)
 	}
 
+	t.applyStaticHeaders(httpReq.Header)
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json, text/event-stream")
 	if t.authToken != "" {
@@ -627,6 +644,7 @@ func (t *HTTPTransport) Close() error {
 		defer cancel()
 		req, err := http.NewRequestWithContext(ctx, "DELETE", t.url, nil)
 		if err == nil {
+			t.applyStaticHeaders(req.Header)
 			req.Header.Set("Mcp-Session-Id", t.sessionID)
 			if t.authToken != "" {
 				req.Header.Set("Authorization", "Bearer "+t.authToken)

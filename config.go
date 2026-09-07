@@ -64,6 +64,9 @@ type ServerConfig struct {
 	Command   string   `json:"command,omitempty"`
 	Args      []string `json:"args,omitempty"`
 	Enabled   *bool    `json:"enabled,omitempty"` // nil or true = enabled
+	// Values may reference ${VAR}, expanded at request time so a secret never
+	// has to be written to disk. HTTP servers only.
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // IsEnabled returns whether the server is enabled (default true).
@@ -257,7 +260,13 @@ func resolveServer(nameOrURL string) (*ServerConfig, string, error) {
 		if err := validateEndpointURL(nameOrURL, "MCP server"); err != nil {
 			return nil, "", err
 		}
-		return &ServerConfig{Transport: "streamable-http", URL: nameOrURL}, os.Getenv("MCP_AUTH_TOKEN"), nil
+		// From env, not a flag: an ad-hoc URL has no config entry, and on
+		// `mcp call` a --header flag would collide with the --<param> flags.
+		headers, err := parseHeaderFlags(splitEnvHeaders(os.Getenv("MCP_HEADERS")))
+		if err != nil {
+			return nil, "", fmt.Errorf("MCP_HEADERS: %w", err)
+		}
+		return &ServerConfig{Transport: "streamable-http", URL: nameOrURL, Headers: headers}, os.Getenv("MCP_AUTH_TOKEN"), nil
 	}
 	if err := validateServerName(nameOrURL); err != nil {
 		return nil, "", err

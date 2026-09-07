@@ -105,6 +105,15 @@ mcp servers
 mcp add <name> <url>
 mcp add <name> --stdio <command> [args...]
 
+# Add an HTTP server with static headers (repeatable; --header or -H).
+# Header values may reference environment variables as ${VAR}, expanded at
+# request time so secrets never touch servers.json. This is how you connect
+# to enterprise MCP servers that authenticate with a static key + org id
+# rather than OAuth (e.g. Devin):
+mcp add devin https://mcp.devin.ai/mcp \
+  --header "Authorization: Bearer ${DEVIN_API_KEY}" \
+  --header "X-Org-Id: ${DEVIN_ORG_ID}"
+
 # Discover tools (compact summaries — name + description only)
 mcp tools [server] [--query "search term"] [--refresh]
 
@@ -150,6 +159,12 @@ mcp ping https://api.example.com/mcp
 
 # Authenticate with a token for ad-hoc URLs
 MCP_AUTH_TOKEN=<token> mcp call https://api.example.com/mcp <tool> --params '{}'
+
+# Static headers for ad-hoc URLs (no `add` needed): one "Name: Value" per
+# line in MCP_HEADERS. Values may reference env vars as ${VAR}. Works for
+# every ad-hoc command (tools, call, resources, read, ping, listen).
+MCP_HEADERS="Authorization: Bearer ${DEVIN_API_KEY}
+X-Org-Id: ${DEVIN_ORG_ID}" mcp tools https://mcp.devin.ai/mcp
 
 # Ping / remove
 mcp ping <server>
