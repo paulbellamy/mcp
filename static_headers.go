@@ -9,23 +9,15 @@ import (
 	"strings"
 )
 
-// Arbitrary static request headers on an HTTP MCP server. Unlike the
-// Mcp-Param-* parameter headers derived from a tool's schema (headers.go),
-// these are fixed per-server headers configured at `mcp add` time and sent on
-// every request — the mechanism enterprise servers use for a static API key
-// plus an org identifier (e.g. Devin: Authorization + X-Org-Id) that the
-// OAuth flow does not provide.
+// Fixed per-server request headers, distinct from the schema-derived
+// Mcp-Param-* headers in headers.go. Configured at `mcp add` time (an
+// enterprise static API key + org id the OAuth flow does not provide) and
+// sent on every request.
 
-// headerEnvRef matches a ${NAME} environment-variable reference in a header
-// value. Anything not matching (a bare "$", "${", or "$NAME") is left
-// literal, so ordinary values pass through untouched.
 var headerEnvRef = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 
-// parseHeaderFlag parses a curl-style "Name: Value" header flag. The name
-// must be a valid HTTP token and is canonicalized; the value is everything
-// after the first colon, trimmed of surrounding whitespace. A ${VAR}
-// reference in the value is preserved verbatim (resolved later, at request
-// time) so secrets can stay in the environment rather than servers.json.
+// A ${VAR} in the value is left unexpanded (resolved at request time) so a
+// secret stays in the environment rather than servers.json.
 func parseHeaderFlag(s string) (name, value string, err error) {
 	idx := strings.IndexByte(s, ':')
 	if idx < 0 {
@@ -45,8 +37,6 @@ func parseHeaderFlag(s string) (name, value string, err error) {
 	return http.CanonicalHeaderKey(name), value, nil
 }
 
-// parseHeaderFlags folds a list of raw "Name: Value" flags into a
-// canonicalized map. Later occurrences of a header override earlier ones.
 func parseHeaderFlags(raw []string) (map[string]string, error) {
 	if len(raw) == 0 {
 		return nil, nil
@@ -62,9 +52,7 @@ func parseHeaderFlags(raw []string) (map[string]string, error) {
 	return headers, nil
 }
 
-// splitEnvHeaders splits the MCP_HEADERS env value into individual header
-// flags, one "Name: Value" per line. Blank lines are ignored so the variable
-// reads naturally in a shell heredoc or a .env file.
+// One "Name: Value" per line so MCP_HEADERS reads naturally in a heredoc.
 func splitEnvHeaders(v string) []string {
 	if strings.TrimSpace(v) == "" {
 		return nil
@@ -79,16 +67,13 @@ func splitEnvHeaders(v string) []string {
 	return out
 }
 
-// resolveHeaders expands ${VAR} references and validates each value, yielding
-// the concrete headers to put on the wire. A nil/empty input returns a nil
-// map (no headers). An unset referenced variable, or a value that is not a
-// valid HTTP field value after expansion, is an error — surfaced at connect
-// time rather than silently sending a broken header.
+// An unset ${VAR} is an error here (connect time) rather than a silently
+// broken header on the wire.
 func resolveHeaders(raw map[string]string) (map[string]string, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
-	// Resolve in a deterministic order so any error is stable across runs.
+	// Deterministic order so the error on a bad set is stable across runs.
 	names := make([]string, 0, len(raw))
 	for k := range raw {
 		names = append(names, k)
@@ -109,12 +94,10 @@ func resolveHeaders(raw map[string]string) (map[string]string, error) {
 	return out, nil
 }
 
-// expandHeaderEnv replaces every ${VAR} in value with the environment
-// variable's value, erroring if any referenced variable is unset.
 func expandHeaderEnv(value string) (string, error) {
 	var missing []string
 	out := headerEnvRef.ReplaceAllStringFunc(value, func(m string) string {
-		name := m[2 : len(m)-1] // strip ${ and }
+		name := m[2 : len(m)-1]
 		v, ok := os.LookupEnv(name)
 		if !ok {
 			missing = append(missing, name)
@@ -128,10 +111,9 @@ func expandHeaderEnv(value string) (string, error) {
 	return out, nil
 }
 
-// validateHeaderValue rejects values that are not legal HTTP field values:
-// control characters other than horizontal tab, and DEL. This mirrors the
-// net/http field-value rules so a bad value fails with a clear message
-// instead of an opaque transport error (or, worse, header injection).
+// Mirrors net/http's field-value rule so a bad (or injected) value fails
+// with a clear message, not an opaque transport error. Tab is the one
+// control character HTTP permits.
 func validateHeaderValue(v string) error {
 	for i := 0; i < len(v); i++ {
 		b := v[i]

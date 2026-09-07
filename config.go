@@ -64,11 +64,8 @@ type ServerConfig struct {
 	Command   string   `json:"command,omitempty"`
 	Args      []string `json:"args,omitempty"`
 	Enabled   *bool    `json:"enabled,omitempty"` // nil or true = enabled
-	// Headers are arbitrary static HTTP headers sent on every request to an
-	// HTTP (streamable-http) server — e.g. an enterprise API key and org id
-	// that isn't served by the OAuth flow. Keys are canonicalized. Values may
-	// reference environment variables as ${VAR}, expanded at request time so
-	// secrets need not be written to disk. Ignored for stdio servers.
+	// Values may reference ${VAR}, expanded at request time so a secret never
+	// has to be written to disk. HTTP servers only.
 	Headers map[string]string `json:"headers,omitempty"`
 }
 
@@ -263,9 +260,8 @@ func resolveServer(nameOrURL string) (*ServerConfig, string, error) {
 		if err := validateEndpointURL(nameOrURL, "MCP server"); err != nil {
 			return nil, "", err
 		}
-		// Ad-hoc URLs have no config entry, so static headers come from the
-		// MCP_HEADERS env var (newline-separated "Name: Value" lines) — the
-		// counterpart to MCP_AUTH_TOKEN for enterprise servers reached by URL.
+		// From env, not a flag: an ad-hoc URL has no config entry, and on
+		// `mcp call` a --header flag would collide with the --<param> flags.
 		headers, err := parseHeaderFlags(splitEnvHeaders(os.Getenv("MCP_HEADERS")))
 		if err != nil {
 			return nil, "", fmt.Errorf("MCP_HEADERS: %w", err)

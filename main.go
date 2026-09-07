@@ -226,9 +226,8 @@ Options (HTTP only):
 
 // cmdAdd handles the `mcp add` command.
 func cmdAdd(args []string) error {
-	// Parse flags up to an optional --stdio boundary. Everything after
-	// --stdio is the child command, taken literally (so a command's own -H or
-	// -h is never mistaken for a flag of `mcp add`).
+	// Everything after --stdio is the child command, taken literally, so its
+	// own -H/-h is never mistaken for a flag of `mcp add`.
 	var positionals, headerFlags, stdioCmd []string
 	stdio := false
 	for i := 0; i < len(args); {

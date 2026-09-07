@@ -297,10 +297,8 @@ type HTTPTransport struct {
 	authToken string
 	client    *http.Client
 	sessionID string
-	// headers are resolved static headers applied to every request (see
-	// static_headers.go). Set once before the first Send and never mutated,
-	// so no locking is needed to read them. A configured Authorization here
-	// stands only when no OAuth token is present (the token wins).
+	// Set once before the first Send and never mutated, so reads need no lock.
+	// A configured Authorization stands only when authToken is empty.
 	headers map[string]string
 
 	// mu guards the fields below. SetTimeout and setProtocolVersion may be
@@ -327,16 +325,12 @@ func NewHTTPTransport(url string, authToken string) *HTTPTransport {
 	}
 }
 
-// setHeaders records the resolved static headers to apply to every request.
-// Call before the transport is used; it is not safe against concurrent Send.
 func (t *HTTPTransport) setHeaders(h map[string]string) {
 	t.headers = h
 }
 
-// applyStaticHeaders writes the configured static headers onto a request.
-// Called before the protocol-critical headers (Content-Type, Accept,
-// MCP-Protocol-Version, ...) so a stray configured header can never clobber
-// the framing the transport depends on.
+// Applied before the protocol framing headers so a stray configured header
+// cannot clobber what the transport depends on.
 func (t *HTTPTransport) applyStaticHeaders(h http.Header) {
 	for k, v := range t.headers {
 		h.Set(k, v)
@@ -389,8 +383,6 @@ func (t *HTTPTransport) sendWithContext(ctx context.Context, req jsonrpcRequest,
 		return jsonrpcResponse{}, fmt.Errorf("create request: %w", err)
 	}
 
-	// Configured static headers first; the protocol framing below wins over
-	// any collision, and a static Authorization stands only when no token.
 	t.applyStaticHeaders(httpReq.Header)
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json, text/event-stream")

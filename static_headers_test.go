@@ -252,7 +252,7 @@ func TestCmdAdd_Headers_EndToEnd(t *testing.T) {
 		}
 	})
 
-	// The raw, unexpanded headers are persisted with canonical names.
+	// Persisted raw (env ref intact); expansion is deferred to connect time.
 	cfg, err := getServerConfig("devin")
 	if err != nil {
 		t.Fatal(err)
@@ -264,7 +264,6 @@ func TestCmdAdd_Headers_EndToEnd(t *testing.T) {
 		t.Errorf("stored Authorization = %q, want raw env ref", cfg.Headers["Authorization"])
 	}
 
-	// The server saw the expanded values on the discovery requests.
 	if got := rec.get("X-Org-Id"); got != "acme" {
 		t.Errorf("server X-Org-Id = %q", got)
 	}
@@ -284,11 +283,10 @@ func TestCmdAdd_Headers_RejectedForStdio(t *testing.T) {
 
 func TestCmdAdd_Stdio_ChildFlagsPassThrough(t *testing.T) {
 	setupTestConfigDir(t)
-	// A stdio command's own --header (or any flag) placed AFTER --stdio is part
-	// of its argv and must reach it verbatim, never consumed by `mcp add`.
+	// A stdio command's own flags after --stdio must reach it verbatim.
 	_ = captureStderr(t, func() {
-		// Nonexistent command: discovery fails fast (tolerated) without a
-		// 60s stdio handshake timeout.
+		// Nonexistent command so discovery fails fast, dodging the 60s stdio
+		// handshake timeout a real command would incur.
 		if err := cmdAdd([]string{"wrapped", "--stdio", "mcp-nonexistent-test-cmd",
 			"--header", "X-Org-Id: acme", "-H", "Authorization: Bearer k"}); err != nil {
 			t.Fatalf("cmdAdd: %v", err)
@@ -366,9 +364,8 @@ func TestCmdAdd_Headers_ConnectExpansionError(t *testing.T) {
 	srv, _ := newRecordingModernServer(t)
 	defer srv.Close()
 
-	// The referenced env var is unset: add still succeeds (discovery is
-	// best-effort) but resolveHeaders must surface the failure rather than
-	// send a literal ${...}. Assert the connect path errors on it.
+	// add tolerates the failed discovery, but the unset ${VAR} must surface
+	// as a connect error, never a literal ${...} on the wire.
 	if err := cmdAdd([]string{"devin", srv.URL, "-H", "Authorization: Bearer ${DEFINITELY_UNSET_HDR}"}); err != nil {
 		t.Fatalf("cmdAdd should tolerate discovery failure, got %v", err)
 	}
