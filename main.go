@@ -284,7 +284,7 @@ func cmdAdd(args []string) error {
 
 	// HTTP mode
 	if len(positionals) < 2 {
-		return fmt.Errorf("usage: mcp add <name> <url> [--header \"Name: Value\"]...")
+		return fmt.Errorf("usage: mcp add <name> <url> [--header \"Name: Value\" ...]")
 	}
 	serverURL := positionals[1]
 	if err := validateEndpointURL(serverURL, "MCP server"); err != nil {
