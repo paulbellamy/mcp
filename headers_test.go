@@ -422,8 +422,26 @@ func TestCmdCall_HeaderMismatchRefreshesAndRetries(t *testing.T) {
 	if calls != 2 {
 		t.Errorf("expected 2 tools/call attempts (mismatch then retry), got %d", calls)
 	}
-	if !strings.Contains(stderr, "header mismatch") {
-		t.Errorf("expected a header-mismatch warning on stderr, got: %q", stderr)
+	// The self-healing retry is routine progress, so by default it must stay
+	// off stderr: clients merging stderr into the JSON stream would choke.
+	if strings.Contains(stderr, "header mismatch") {
+		t.Errorf("header-mismatch retry should be silent without --verbose, got: %q", stderr)
+	}
+}
+
+func TestLogVerbose_GatedByFlag(t *testing.T) {
+	t.Cleanup(func() { verbose = false })
+
+	verbose = false
+	quiet := captureStderr(t, func() { logVerbose("progress %d", 1) })
+	if quiet != "" {
+		t.Errorf("expected no output without verbose, got %q", quiet)
+	}
+
+	verbose = true
+	loud := captureStderr(t, func() { logVerbose("progress %d", 2) })
+	if loud != "progress 2\n" {
+		t.Errorf("expected verbose output, got %q", loud)
 	}
 }
 

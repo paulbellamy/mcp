@@ -169,6 +169,12 @@ X-Org-Id: ${DEVIN_ORG_ID}" mcp tools https://mcp.devin.ai/mcp
 # Ping / remove
 mcp ping <server>
 mcp remove <name>
+
+# Progress chatter (token refresh, schema-refresh retries, skipped transport
+# lines) is off by default so stderr carries only warnings and errors.
+# Turn it on with a global flag before the subcommand, or via env.
+mcp --verbose call <server> <tool>
+MCP_VERBOSE=1 mcp call <server> <tool>
 ```
 
 ## License

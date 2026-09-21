@@ -14,6 +14,15 @@ func main() {
 	}
 
 	args := os.Args[1:]
+	if os.Getenv("MCP_VERBOSE") != "" {
+		verbose = true
+	}
+	// Global flags go before the subcommand so they can never collide with
+	// a tool parameter of the same name in `mcp call`.
+	for len(args) > 0 && args[0] == "--verbose" {
+		verbose = true
+		args = args[1:]
+	}
 	if len(args) == 0 {
 		printUsage()
 		os.Exit(1)
@@ -75,7 +84,7 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Fprintln(os.Stderr, `Usage: mcp <command> [args...]
+	fmt.Fprintln(os.Stderr, `Usage: mcp [--verbose] <command> [args...]
 
 Commands:
   servers                        List configured servers
@@ -133,7 +142,12 @@ Auth flags:
   --start-url <url>              Wrap the auth URL in a gateway /start handoff
                                  (clicker-binding; opt-in)
 
+Global flags:
+  --verbose                      Log progress messages (token refresh, retries,
+                                 skipped transport lines) to stderr
+
 Environment:
+  MCP_VERBOSE                  Same as --verbose when set to any value
   MCP_AUTH_TOKEN               Bearer token (use instead of OAuth flow)
   MCP_HEADERS                  Static headers for ad-hoc URL calls, one
                                "Name: Value" per line (${VAR} expanded)
@@ -395,6 +409,19 @@ func outputJSON(v any) error {
 // logStderr writes a formatted message to stderr.
 func logStderr(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
+}
+
+// verbose enables progress logging; set by --verbose or MCP_VERBOSE.
+var verbose bool
+
+// logVerbose writes a progress message to stderr only when verbose logging
+// is enabled. Use it for routine chatter (refreshes, retries, skipped lines)
+// that clients merging stderr into a JSON stream must not see by default;
+// genuine warnings still go through logStderr unconditionally.
+func logVerbose(format string, args ...any) {
+	if verbose {
+		logStderr(format, args...)
+	}
 }
 
 // fatal writes an error to stderr and exits.
