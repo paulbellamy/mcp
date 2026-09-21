@@ -292,6 +292,7 @@ func refreshTokenWithLock(name string, tokens *AuthTokens) (*AuthTokens, error) 
 		return fresh, nil
 	}
 
+	logVerbose("token expired, refreshing...")
 	refreshed, err := refreshOAuthToken(tokens)
 	if err != nil {
 		return nil, err

@@ -146,7 +146,7 @@ func (t *StdioTransport) readLoop() {
 		var resp jsonrpcResponse
 		if err := json.Unmarshal(line, &resp); err != nil {
 			// Could be debug output, skip
-			logStderr("transport: skipping non-JSON line")
+			logVerbose("transport: skipping non-JSON line")
 			continue
 		}
 
@@ -174,7 +174,7 @@ func (t *StdioTransport) readLoop() {
 		if ok {
 			ch <- stdioResult{resp: resp}
 		} else {
-			logStderr("transport: skipping response with unrecognized ID %s", key)
+			logVerbose("transport: skipping response with unrecognized ID %s", key)
 		}
 	}
 }

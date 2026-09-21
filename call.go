@@ -202,7 +202,7 @@ func cmdCall(args []string) error {
 		// HeaderMismatch (-32020): the server's tool definition no longer
 		// matches our cached schema. Refresh the tool list, recompute the
 		// headers, and retry exactly once.
-		logStderr("warning: server reported a header mismatch; refreshing tool schema and retrying")
+		logVerbose("server reported a header mismatch; refreshing tool schema and retrying")
 		if _, refreshErr := getToolsForServer(server, true); refreshErr != nil {
 			logStderr("warning: tool list refresh failed: %v", refreshErr)
 			return err
