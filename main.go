@@ -67,6 +67,8 @@ func main() {
 		err = cmdAuthCallback(cmdArgs)
 	case "help", "--help", "-h":
 		printUsage()
+	case "--skill":
+		printSkill()
 	case "version", "--version", "-v":
 		fmt.Println("mcp-cli " + Version)
 	default:
@@ -85,6 +87,7 @@ func main() {
 
 func printUsage() {
 	fmt.Fprintln(os.Stderr, `Usage: mcp [--verbose] <command> [args...]
+       mcp --skill
 
 Commands:
   servers                        List configured servers
@@ -145,6 +148,7 @@ Auth flags:
 Global flags:
   --verbose                      Log progress messages (token refresh, retries,
                                  skipped transport lines) to stderr
+  --skill                        Print the agent skill file and exit
 
 Environment:
   MCP_VERBOSE                  Same as --verbose when set to any value
@@ -155,7 +159,12 @@ Environment:
   MCP_CLIENT_ID                OAuth client ID (for static client credentials)
   MCP_CLIENT_SECRET            OAuth client secret (for static client credentials)
   MCP_CALLBACK_URL             Default callback URL for relay mode
-  MCP_AUTH_START_URL           Optional /start handoff URL (clicker binding)`)
+  MCP_AUTH_START_URL           Optional /start handoff URL (clicker binding)
+
+Are you an AI agent? SKIP if the mcp-cli skill is already in your context.
+Otherwise run: mcp --skill
+It covers when to use this CLI vs native MCP tools, the tools -> schema -> call
+workflow, auth, and output formats.`)
 }
 
 // cmdServers handles the `mcp servers` command.

@@ -84,3 +84,31 @@ func TestHelpShortFlag(t *testing.T) {
 		t.Errorf("expected usage in -h output, got %q", stderr)
 	}
 }
+
+// TestSkillFlag verifies `mcp --skill` prints the bundled SKILL.md verbatim to
+// stdout, so agents get the copy that matches the installed binary.
+func TestSkillFlag(t *testing.T) {
+	want, err := os.ReadFile("skills/mcp-cli/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := captureStdout(t, printSkill)
+	if got != string(want) {
+		t.Errorf("printSkill output does not match skills/mcp-cli/SKILL.md")
+	}
+}
+
+// TestUsagePointsAgentsAtSkill verifies the top-level help documents --skill
+// and tells agents to run it.
+func TestUsagePointsAgentsAtSkill(t *testing.T) {
+	stderr := captureStderr(t, printUsage)
+	for _, want := range []string{
+		"--skill                        Print the agent skill file and exit",
+		"Are you an AI agent?",
+		"Otherwise run: mcp --skill",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("usage missing %q", want)
+		}
+	}
+}
