@@ -175,6 +175,10 @@ mcp remove <name>
 # Turn it on with a global flag before the subcommand, or via env.
 mcp --verbose call <server> <tool>
 MCP_VERBOSE=1 mcp call <server> <tool>
+
+# Print the agent skill (SKILL.md) bundled with this binary. Useful for agents
+# without a plugin/skill system: pipe it into their instructions.
+mcp --skill
 ```
 
 ## License
