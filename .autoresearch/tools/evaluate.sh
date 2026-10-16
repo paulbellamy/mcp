@@ -7,6 +7,13 @@ SP=${AR_SCRATCH:-/tmp/claude-0/-home-user/d00c192f-9989-5be5-80ac-d670b8d21ee6/s
 BASE=${AR_BEST:-autoresearch/agent-ux}
 WT=$SP/wt/eval-$LABEL
 mkdir -p $SP/bins $SP/evals $SP/wt
+# 0. the scorer on disk must still match the hashes frozen at contract time
+python3 -c "
+import json,hashlib,sys
+s=json.load(open('$REPO/.autoresearch/state.json'))
+bad=[p for p,h in s['frozen'].items() if hashlib.sha256(open('$REPO/'+p,'rb').read()).hexdigest()!=h]
+sys.exit('GATE FAIL: frozen files modified: %s' % bad if bad else 0)"
+git -C $REPO diff --quiet HEAD -- .autoresearch/bench || { echo "GATE FAIL: uncommitted bench edits"; exit 2; }
 # 1. frozen-set / scope check
 BAD=$(git -C $REPO diff --name-only "$BASE...$BRANCH" | grep -vE '^(skills/mcp-cli/SKILL\.md|README\.md|[^/]+\.go)$' || true)
 if [ -n "$BAD" ]; then echo "GATE FAIL: out-of-scope paths: $BAD"; exit 2; fi
