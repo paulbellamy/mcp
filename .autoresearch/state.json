@@ -1,0 +1,77 @@
+{
+ "target": "agent-facing surface of the mcp CLI: non-test *.go in repo root, skills/mcp-cli/SKILL.md (+README.md, unscored)",
+ "metric": {
+  "name": "agent_ux_score",
+  "direction": "max",
+  "confidence_margin": 0.006,
+  "confirm_margin_pooled": 0.0046
+ },
+ "budget": {
+  "unit": "bench runs",
+  "size": 144,
+  "layout": "12 fixed tasks x {cold,primed} x 6 reps",
+  "agent_model": "claude-haiku-5-5",
+  "per_run_timeout_s": 300,
+  "per_run_usd_cap": 0.6
+ },
+ "best": {
+  "run": 0,
+  "score": 1.0006,
+  "evals": [
+   1.0029,
+   0.9983
+  ],
+  "branch": "autoresearch/agent-ux",
+  "commit": "e55fe53e42b37fe7c527fab1516cadafbf43957a"
+ },
+ "baseline": {
+  "score": 1.0006,
+  "pass_rate": 1.0,
+  "mean_cost": 0.001753,
+  "mean_bash_calls": 3.95,
+  "mean_output_chars": 8129
+ },
+ "validation_set": [
+  "weather_units",
+  "find_fx",
+  "create_nested",
+  "dns_chain",
+  "docs_resource",
+  "log_tail",
+  "tickets_count",
+  "adhoc_headers",
+  "add_stdio",
+  "enum_recover",
+  "unreachable",
+  "token_cost"
+ ],
+ "holdout_set": [
+  "h_orbit_recent",
+  "h_vm_type",
+  "h_vpn",
+  "h_bearer",
+  "h_stock"
+ ],
+ "breakers": {
+  "max_runs": 24,
+  "no_delta_in_k": 9,
+  "plateau_k": 5,
+  "max_bench_usd": 15.0
+ },
+ "stale_streak": 0,
+ "runs": 0,
+ "bench_usd_spent": 0.505,
+ "frozen": {
+  ".autoresearch/bench/bench.py": "b52f2cf9183b9af58965e2c53f7650d1cdfec76c7f259bb11fa1d2ea82a585b7",
+  ".autoresearch/bench/mockserver.py": "6d2590fb543afed78d29dd74245fcbbb761d08811d0c96706355d2b78c57c2c3",
+  ".autoresearch/bench/profiles.py": "6161ecd251fa663ae0a7c6155ab97c0aac2882ec0fa941ab5bf15d240a8cdba4",
+  ".autoresearch/bench/ref_costs.json": "979175b62e38e03cd26cd5594e3a899b4776bb5f1d9e99de0a7e918f90c7f8f0",
+  ".autoresearch/bench/tasks.py": "eeeb2e9e6b76c865b0f7920f3eea5c1e19d951691e0b0f46f3058809e69ac7b7",
+  "go.mod": "470dca42273d0addbec3baf71699152cb0631597ade2260ca88bb5c3d2ba87f3"
+ },
+ "holdout_baseline": {
+  "score": 1.0015,
+  "pass_rate": 1.0,
+  "n": 60
+ }
+}
