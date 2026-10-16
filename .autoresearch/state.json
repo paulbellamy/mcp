@@ -60,7 +60,7 @@
  },
  "stale_streak": 9,
  "runs": 13,
- "bench_usd_spent": 3.7047,
+ "bench_usd_spent": 5.8097,
  "frozen": {
   ".autoresearch/bench/bench.py": "b52f2cf9183b9af58965e2c53f7650d1cdfec76c7f259bb11fa1d2ea82a585b7",
   ".autoresearch/bench/mockserver.py": "6d2590fb543afed78d29dd74245fcbbb761d08811d0c96706355d2b78c57c2c3",
@@ -73,5 +73,28 @@
   "score": 1.0015,
   "pass_rate": 1.0,
   "n": 60
+ },
+ "final": {
+  "stopped_by": "no_delta_in_k",
+  "holdout": {
+   "baseline": 1.0015,
+   "best": 1.0202,
+   "n": 60
+  },
+  "sonnet_5_5": {
+   "baseline": {
+    "mean_cost": 0.02331,
+    "bash_calls": 3.06,
+    "pass": 1.0
+   },
+   "best": {
+    "mean_cost": 0.01864,
+    "bash_calls": 2.65,
+    "pass": 1.0
+   },
+   "n": 48
+  },
+  "pr_branch": "agent-ux-improvements",
+  "extra_fix": "autoresearch/fix-pagination-warning"
  }
 }
