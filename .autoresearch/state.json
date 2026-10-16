@@ -58,9 +58,9 @@
   "plateau_k": 5,
   "max_bench_usd": 15.0
  },
- "stale_streak": 8,
+ "stale_streak": 9,
  "runs": 13,
- "bench_usd_spent": 3.4991,
+ "bench_usd_spent": 3.7047,
  "frozen": {
   ".autoresearch/bench/bench.py": "b52f2cf9183b9af58965e2c53f7650d1cdfec76c7f259bb11fa1d2ea82a585b7",
   ".autoresearch/bench/mockserver.py": "6d2590fb543afed78d29dd74245fcbbb761d08811d0c96706355d2b78c57c2c3",
