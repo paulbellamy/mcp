@@ -85,9 +85,14 @@ func TestListAllTools_Pagination(t *testing.T) {
 		},
 	}
 
-	tools, _, err := listAllTools(transport, "srv")
+	var tools []toolOutput
+	var err error
+	stderr := captureStderr(t, func() { tools, _, err = listAllTools(transport, "srv") })
 	if err != nil {
 		t.Fatal(err)
+	}
+	if strings.Contains(stderr, "truncated") {
+		t.Errorf("complete multi-page listing must not warn about truncation, got %q", stderr)
 	}
 	if len(tools) != 4 {
 		t.Fatalf("expected 4 tools across 3 pages, got %d", len(tools))
