@@ -87,84 +87,49 @@ func main() {
 
 func printUsage() {
 	fmt.Fprintln(os.Stderr, `Usage: mcp [--verbose] <command> [args...]
-       mcp --skill
 
-Commands:
+Find and call tools on MCP servers. JSON on stdout, logs/warnings on stderr.
+Exit 0 = success, 1 = error (including a tool result with isError).
+
+Commands (usual flow: servers -> tools -> schema -> call):
   servers                        List configured servers
-  add <name> <url> [--header ..] Add an HTTP server (--header/-H repeatable)
+  tools [server|url] [--query q] List tools, compact (--refresh, --full)
+  schema <server> <tool>         Show full input schema for one tool
+  call <server|url> <tool> ...   Call a tool (flags below)
+  resources [server|url]         List readable resources (--query q)
+  read <server|url> <uri>        Read a resource by URI (--max-output N)
+  add <name> <url> [-H "K: V"].. Add an HTTP server (${VAR} in header values)
   add <name> --stdio <cmd> ...   Add a stdio server
-  remove <name>                  Remove a server
-  enable <name>                  Enable a server
-  disable <name>                 Disable a server
-  tools [server|url] [flags]     List available tools (compact by default)
-  schema <server> <tool>         Show full schema for a tool
+  remove|enable|disable <name>   Manage a configured server
+  ping <server|url>              Check the server is reachable and authed
+  auth <name>                    Authenticate (idempotent; see mcp auth --help)
   stats [--full]                 Show estimated token cost of tool schemas
-  resources [server|url] [flags] List readable resources (and templates)
-  read <server|url> <uri> ...    Read a resource's contents by URI
-  call <server|url> <tool> ...   Call a tool
-  auth <name> [flags]            Authenticate with a server (idempotent; no-op if already connected)
-  ping <server|url>               Ping a server (liveness check)
-  listen <server|url> [flags]    Stream change notifications (subscriptions/listen)
-  daemon                         Keep stdio servers warm (foreground)
-  daemon stop                    Stop the daemon
-  help                           Show this help
-  version                        Show version
+  listen <server|url> [flags]    Stream change notifications (mcp listen --help)
+  daemon [stop]                  Keep stdio servers warm (foreground)
+  help, version
 
 Call flags:
-  --<param> <value>              Tool parameter (generated from schema)
-  --params '{"key":"val"}'       Tool parameters as JSON (or pipe via stdin)
-  --stream                       Stream progress events as NDJSON
-  --max-output N                 Truncate output to N chars (default 30000)
+  --<param> <value>              Tool parameter, typed from the cached schema
+                                 (arrays/objects as inline JSON)
+  --params '{"key":"val"}'       All parameters as JSON (or pipe via stdin)
+  --max-output N                 Truncate output to N chars (default 30000,
+                                 0 = off); full output is saved to a file
   --truncate head|tail           Keep the head (default) or tail when truncating
-  --timeout <duration>           Per-call timeout (e.g. 30s, 5m; 0 = no limit)
-                                 Default: 2m for plain calls, 5m for --stream
+  --stream                       Stream progress events as NDJSON
+  --timeout <duration>           e.g. 30s, 5m; 0 = none (default 2m, 5m stream)
   --help                         Show tool description and parameters
 
-Tools flags:
-  --query <q>                    Filter tools by name/description
-  --full                         Include inputSchema in output (default: compact)
-  --refresh                      Force refresh from server
-  --json                         Output as JSON (default: human-readable)
-
-Resources flags:
-  --query <q>                    Filter resources by uri/name/description
-  --json                         Output as JSON (default: human-readable)
-
-Read flags:
-  --max-output N                 Truncate output to N chars (default 30000)
-  --timeout <duration>           Per-call timeout (e.g. 30s, 5m; 0 = no limit)
-
-Listen flags:
-  --tools                        Subscribe to tools list changes
-  --prompts                      Subscribe to prompts list changes
-  --resources                    Subscribe to resources list changes
-  --resource <uri>               Subscribe to updates of one resource (repeatable)
-
-Auth flags:
-  --callback-url <url>           Use relay mode
-  --start-url <url>              Wrap the auth URL in a gateway /start handoff
-                                 (clicker-binding; opt-in)
+Ad-hoc URL: pass it in place of <server> (schema needs a configured name; use
+"mcp tools <url> --full --query <tool>"). Headers come from the environment:
+  MCP_HEADERS                    "Name: Value" lines (${VAR} expanded)
+  MCP_AUTH_TOKEN                 Bearer token (also used by mcp auth)
 
 Global flags:
-  --verbose                      Log progress messages (token refresh, retries,
-                                 skipped transport lines) to stderr
+  --verbose                      Log progress to stderr (or set MCP_VERBOSE)
   --skill                        Print the agent skill file and exit
 
-Environment:
-  MCP_VERBOSE                  Same as --verbose when set to any value
-  MCP_AUTH_TOKEN               Bearer token (use instead of OAuth flow)
-  MCP_HEADERS                  Static headers for ad-hoc URL calls, one
-                               "Name: Value" per line (${VAR} expanded)
-  MCP_AUTH_CODE                Authorization code (set by gateway for OAuth callback)
-  MCP_CLIENT_ID                OAuth client ID (for static client credentials)
-  MCP_CLIENT_SECRET            OAuth client secret (for static client credentials)
-  MCP_CALLBACK_URL             Default callback URL for relay mode
-  MCP_AUTH_START_URL           Optional /start handoff URL (clicker binding)
-
-Are you an AI agent? SKIP if the mcp-cli skill is already in your context.
-Otherwise run: mcp --skill
-It covers when to use this CLI vs native MCP tools, the tools -> schema -> call
-workflow, auth, and output formats.`)
+Are you an AI agent? The above covers the usual flow. For when to prefer
+native MCP tools, output shapes, auth and truncation recovery: mcp --skill`)
 }
 
 // cmdServers handles the `mcp servers` command.
