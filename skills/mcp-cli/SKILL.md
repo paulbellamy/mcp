@@ -15,7 +15,7 @@ warns, the rest still list). Exit 0 = success, 1 = error or tool `isError`.
 ## Workflow
 
 ```bash
-mcp servers                         # configured servers
+mcp list                            # one line per server: tool names or error
 mcp tools [server] [--query word]   # [{"server","name","description"}]
 mcp schema <server> <tool>          # full inputSchema for one tool
 mcp call <server> <tool> --key value --limit 10   # flags typed from schema
