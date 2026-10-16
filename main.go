@@ -33,6 +33,8 @@ func main() {
 
 	var err error
 	switch cmd {
+	case "list", "ls":
+		err = cmdList(cmdArgs)
 	case "servers":
 		err = cmdServers(cmdArgs)
 	case "add":
@@ -91,8 +93,9 @@ func printUsage() {
 Find and call tools on MCP servers. JSON on stdout, logs/warnings on stderr.
 Exit 0 = success, 1 = error (including a tool result with isError).
 
-Commands (usual flow: servers -> tools -> schema -> call):
-  servers                        List configured servers
+Commands (usual flow: list -> schema -> call):
+  list                           Each server and its tool names, one line each
+  servers                        List configured servers (full config)
   tools [server|url] [--query q] List tools, compact (--refresh, --full)
   schema <server> <tool>         Show full input schema for one tool
   call <server|url> <tool> ...   Call a tool (flags below)

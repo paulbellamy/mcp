@@ -98,7 +98,10 @@ go install github.com/paulbellamy/mcp@latest
 ## Usage
 
 ```bash
-# List configured servers
+# Overview: one line per server with its tool names (or why it failed)
+mcp list [--refresh]
+
+# List configured servers (full config as JSON)
 mcp servers
 
 # Add a server (HTTP or stdio)
