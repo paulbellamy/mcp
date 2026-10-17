@@ -161,15 +161,12 @@ func listAllTools(transport Transport, serverName string) ([]toolOutput, *int64,
 		}
 
 		if result.NextCursor == "" {
-			break
+			return allTools, ttlMs, nil
 		}
 		cursor = result.NextCursor
 	}
 
-	if cursor != "" {
-		logStderr("warning: tools list truncated after %d pages", maxPages)
-	}
-
+	logStderr("warning: tools list truncated after %d pages", maxPages)
 	return allTools, ttlMs, nil
 }
 

@@ -105,7 +105,7 @@ func TestUsagePointsAgentsAtSkill(t *testing.T) {
 	for _, want := range []string{
 		"--skill                        Print the agent skill file and exit",
 		"Are you an AI agent?",
-		"Otherwise run: mcp --skill",
+		"auth and truncation recovery: mcp --skill",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("usage missing %q", want)
