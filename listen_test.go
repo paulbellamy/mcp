@@ -205,6 +205,12 @@ func TestParseListenArgs(t *testing.T) {
 			wantParams: subscriptionsListenParams{Notifications: subscriptionNotifications{ResourceSubscriptions: []string{"file:///a.txt"}}},
 		},
 		{
+			name:       "events list changes only",
+			args:       []string{"srv", "--events"},
+			wantServer: "srv",
+			wantParams: subscriptionsListenParams{Notifications: subscriptionNotifications{EventsListChanged: true}},
+		},
+		{
 			name:    "no filters",
 			args:    []string{"srv"},
 			wantErr: "at least one of",

@@ -59,6 +59,8 @@ func main() {
 		err = cmdPing(cmdArgs)
 	case "listen":
 		err = cmdListen(cmdArgs)
+	case "events":
+		err = cmdEvents(cmdArgs)
 	case "daemon":
 		err = cmdDaemon(cmdArgs)
 	case "enable":
@@ -108,6 +110,7 @@ Commands (usual flow: list -> schema -> call):
   auth <name>                    Authenticate (idempotent; see mcp auth --help)
   stats [--full]                 Show estimated token cost of tool schemas
   listen <server|url> [flags]    Stream change notifications (mcp listen --help)
+  events [server|url]            List event types; poll/watch them (mcp events -h)
   daemon [stop]                  Keep stdio servers warm (foreground)
   help, version
 

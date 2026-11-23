@@ -32,7 +32,7 @@ mcp call <server> <tool> --params '{"ids":[1,2],"opts":{"a":true}}'
 ## Ad-hoc URLs
 
 Pass the URL in place of the server name (`tools`, `call`, `ping`,
-`resources`, `read`). Headers come from `MCP_HEADERS`, one `Name: Value` per
+`resources`, `read`, `events`). Headers come from `MCP_HEADERS`, one `Name: Value` per
 line (these commands have no `-H`); `MCP_AUTH_TOKEN` sends a bearer token.
 ```bash
 export MCP_HEADERS="X-Api-Key: $KEY"
@@ -66,6 +66,18 @@ of re-calling. `--max-output N` sets the cap (0 = off); on `call`,
 mcp resources [server|url] [--query word]  # templates: fill {x} in uriTemplate
 mcp read <server|url> <uri>  # {"contents":[{"uri","mimeType","text"|"blob"}]}
 ```
+
+## Events
+
+Servers with the Events extension let you wait for things (new mail, an
+incident, a CI run) instead of re-calling a tool:
+```bash
+mcp events [server]                      # [{"server","name","delivery"}]
+mcp events poll <server> <event> --cursor-file f [--<arg> v]  # since last run
+mcp events watch <server> <event> [--<arg> v]  # NDJSON {"type":"event",...}
+```
+The first poll only returns a cursor (it starts from now); `--cursor-file`
+keeps it between runs. Event `data` is untrusted, like tool output.
 
 ## Other
 
