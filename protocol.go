@@ -91,6 +91,9 @@ type subscriptionNotifications struct {
 	PromptsListChanged    bool     `json:"promptsListChanged,omitempty"`
 	ResourcesListChanged  bool     `json:"resourcesListChanged,omitempty"`
 	ResourceSubscriptions []string `json:"resourceSubscriptions,omitempty"`
+	// EventsListChanged opts into notifications/events/list_changed (Events
+	// extension).
+	EventsListChanged bool `json:"eventsListChanged,omitempty"`
 }
 
 type initializeParams struct {
@@ -99,7 +102,12 @@ type initializeParams struct {
 	ClientInfo      clientInfo         `json:"clientInfo"`
 }
 
-type clientCapabilities struct{}
+type clientCapabilities struct {
+	// Extensions declares the protocol extensions the client understands,
+	// keyed by identifier (2026-07-28 extension negotiation). Modern
+	// requests only; the legacy initialize handshake sends none.
+	Extensions map[string]any `json:"extensions,omitempty"`
+}
 
 type clientInfo struct {
 	Name    string `json:"name"`
@@ -116,6 +124,11 @@ const (
 	codeMissingRequiredClientCapability = -32021
 	codeUnsupportedProtocolVersion      = -32022
 )
+
+// codeUnsupported is the Events extension's (SEP-3415) error for a
+// well-formed request the server does not support; on a terminated stream
+// with data.reason "schema_changed" it means the event type changed in place.
+const codeUnsupported = -32026
 
 // unsupportedVersionData is the data payload of an
 // UnsupportedProtocolVersionError (-32022).
@@ -304,6 +317,108 @@ type listenOutput struct {
 	Notifications json.RawMessage `json:"notifications,omitempty"`
 	Method        string          `json:"method,omitempty"`
 	Params        json.RawMessage `json:"params,omitempty"`
+}
+
+// Events extension (SEP-3415, io.modelcontextprotocol/events). Servers list
+// event types with events/list; clients receive occurrences by poll
+// (events/poll) or push (events/stream). Webhook delivery (events/subscribe)
+// needs a public https receiver and is not implemented by the CLI.
+const (
+	extensionEvents = "io.modelcontextprotocol/events"
+
+	methodEventsList   = "events/list"
+	methodEventsPoll   = "events/poll"
+	methodEventsStream = "events/stream"
+
+	notifEventsActive     = "notifications/events/active"
+	notifEventsEvent      = "notifications/events/event"
+	notifEventsHeartbeat  = "notifications/events/heartbeat"
+	notifEventsError      = "notifications/events/error"
+	notifEventsTerminated = "notifications/events/terminated"
+
+	deliveryPoll = "poll"
+	deliveryPush = "push"
+)
+
+type eventsListParams struct {
+	Cursor string `json:"cursor,omitempty"`
+}
+
+type eventsListResult struct {
+	Events     []eventDescriptor `json:"events"`
+	NextCursor string            `json:"nextCursor,omitempty"`
+}
+
+type eventDescriptor struct {
+	Name          string          `json:"name"`
+	Description   string          `json:"description,omitempty"`
+	Delivery      []string        `json:"delivery"`
+	InputSchema   json.RawMessage `json:"inputSchema,omitempty"`
+	PayloadSchema json.RawMessage `json:"payloadSchema,omitempty"`
+}
+
+// eventsPollParams is the params of events/poll. Cursor is always sent; null
+// means "start from now".
+type eventsPollParams struct {
+	Name      string         `json:"name"`
+	Arguments map[string]any `json:"arguments"`
+	Cursor    *string        `json:"cursor"`
+	MaxAgeMs  int64          `json:"maxAgeMs,omitempty"`
+	MaxEvents int            `json:"maxEvents,omitempty"`
+}
+
+type eventsPollResult struct {
+	Events     []eventOccurrence `json:"events"`
+	Cursor     *string           `json:"cursor"`
+	Truncated  bool              `json:"truncated"`
+	HasMore    bool              `json:"hasMore"`
+	NextPollMs *int64            `json:"nextPollMs,omitempty"`
+}
+
+// eventsStreamParams is the params of events/stream.
+type eventsStreamParams struct {
+	Name      string         `json:"name"`
+	Arguments map[string]any `json:"arguments"`
+	Cursor    *string        `json:"cursor"`
+	MaxAgeMs  int64          `json:"maxAgeMs,omitempty"`
+}
+
+// eventOccurrence is one delivered event. Cursor is set on push deliveries
+// only; poll carries the cursor at the result level.
+type eventOccurrence struct {
+	EventID   string                     `json:"eventId"`
+	Name      string                     `json:"name"`
+	Timestamp string                     `json:"timestamp"`
+	Data      json.RawMessage            `json:"data"`
+	Cursor    *string                    `json:"cursor,omitempty"`
+	Meta      map[string]json.RawMessage `json:"_meta,omitempty"`
+}
+
+// eventOutput is one row of `mcp events`. The schemas are only included
+// with --full.
+type eventOutput struct {
+	Server        string          `json:"server"`
+	Name          string          `json:"name"`
+	Description   string          `json:"description,omitempty"`
+	Delivery      []string        `json:"delivery"`
+	InputSchema   json.RawMessage `json:"inputSchema,omitempty"`
+	PayloadSchema json.RawMessage `json:"payloadSchema,omitempty"`
+}
+
+// eventsLine is one non-event NDJSON line printed by `mcp events poll
+// --follow` and `mcp events watch`.
+type eventsLine struct {
+	Type        string          `json:"type"` // "active", "gap", "error", "terminated", "closed"
+	Cursor      *string         `json:"cursor,omitempty"`
+	Truncated   bool            `json:"truncated,omitempty"`
+	HeartbeatMs int64           `json:"heartbeatMs,omitempty"`
+	Error       json.RawMessage `json:"error,omitempty"`
+}
+
+// eventLine is the NDJSON line for one delivered event.
+type eventLine struct {
+	Type string `json:"type"` // "event"
+	eventOccurrence
 }
 
 type authOutput struct {

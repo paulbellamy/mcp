@@ -18,7 +18,7 @@ func cmdListen(args []string) error {
 		return err
 	}
 	if showHelp {
-		_, _ = fmt.Fprintln(os.Stderr, `Usage: mcp listen <server|url> [--tools] [--prompts] [--resources] [--resource <uri> ...] [--json]
+		_, _ = fmt.Fprintln(os.Stderr, `Usage: mcp listen <server|url> [--tools] [--prompts] [--resources] [--resource <uri> ...] [--events] [--json]
 
 Hold a subscriptions/listen stream open and print one JSON line per change
 notification. Requires a server speaking protocol 2026-07-28 or later; at
@@ -30,6 +30,7 @@ Flags:
   --prompts           Subscribe to prompts list changes
   --resources         Subscribe to resources list changes
   --resource <uri>    Subscribe to updates of one resource (repeatable)
+  --events            Subscribe to event type list changes (Events extension)
   --json              Output as JSON lines (always on; accepted for consistency)`)
 		return nil
 	}
@@ -55,7 +56,7 @@ Flags:
 // and the subscription filter params. At least one filter is required.
 func parseListenArgs(args []string) (string, subscriptionsListenParams, bool, error) {
 	var serverName string
-	var tools, prompts, resources bool
+	var tools, prompts, resources, events bool
 	var resourceURIs []string
 
 	for i := 0; i < len(args); i++ {
@@ -66,6 +67,8 @@ func parseListenArgs(args []string) (string, subscriptionsListenParams, bool, er
 			prompts = true
 		case "--resources":
 			resources = true
+		case "--events":
+			events = true
 		case "--resource":
 			if i+1 >= len(args) {
 				return "", subscriptionsListenParams{}, false, fmt.Errorf("--resource requires a value")
@@ -92,10 +95,10 @@ func parseListenArgs(args []string) (string, subscriptionsListenParams, bool, er
 	}
 
 	if serverName == "" {
-		return "", subscriptionsListenParams{}, false, fmt.Errorf("usage: mcp listen <server|url> [--tools] [--prompts] [--resources] [--resource <uri> ...]")
+		return "", subscriptionsListenParams{}, false, fmt.Errorf("usage: mcp listen <server|url> [--tools] [--prompts] [--resources] [--resource <uri> ...] [--events]")
 	}
-	if !tools && !prompts && !resources && len(resourceURIs) == 0 {
-		return "", subscriptionsListenParams{}, false, fmt.Errorf("at least one of --tools, --prompts, --resources, or --resource <uri> is required")
+	if !tools && !prompts && !resources && !events && len(resourceURIs) == 0 {
+		return "", subscriptionsListenParams{}, false, fmt.Errorf("at least one of --tools, --prompts, --resources, --resource <uri>, or --events is required")
 	}
 
 	return serverName, subscriptionsListenParams{
@@ -104,6 +107,7 @@ func parseListenArgs(args []string) (string, subscriptionsListenParams, bool, er
 			PromptsListChanged:    prompts,
 			ResourcesListChanged:  resources,
 			ResourceSubscriptions: resourceURIs,
+			EventsListChanged:     events,
 		},
 	}, false, nil
 }
@@ -122,7 +126,7 @@ func runListen(transport Transport, params subscriptionsListenParams) error {
 	transport.SetTimeout(0)
 
 	reqID := nextID()
-	cancelOnInterrupt(transport, reqID)
+	cancelOnInterrupt(transport, func() int { return reqID })
 
 	resp, err := transport.SendStreaming(jsonrpcRequest{
 		JSONRPC: jsonrpcVersion,
@@ -201,11 +205,12 @@ func subscriptionIDMatches(v any, reqID int) bool {
 	return false
 }
 
-// cancelOnInterrupt makes Ctrl-C cancel the listen subscription. Exiting the
-// process closes an HTTP stream on its own (the spec's cancellation signal);
-// a stdio child additionally gets a best-effort notifications/cancelled with
-// the listen request id so it can stop producing events.
-func cancelOnInterrupt(transport Transport, reqID int) {
+// cancelOnInterrupt makes Ctrl-C cancel a stream subscription (listen or
+// events/stream). Exiting the process closes an HTTP stream on its own (the
+// spec's cancellation signal); a stdio child additionally gets a best-effort
+// notifications/cancelled with the stream's request id, read via reqID at
+// interrupt time, so it can stop producing events.
+func cancelOnInterrupt(transport Transport, reqID func() int) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt)
 	go func() {
@@ -214,7 +219,7 @@ func cancelOnInterrupt(transport Transport, reqID int) {
 			_ = transport.Notify(jsonrpcNotification{
 				JSONRPC: jsonrpcVersion,
 				Method:  "notifications/cancelled",
-				Params:  map[string]any{"requestId": reqID},
+				Params:  map[string]any{"requestId": reqID()},
 			})
 		}
 		os.Exit(130)

@@ -180,6 +180,15 @@ func (t *StdioTransport) readLoop() {
 }
 
 func (t *StdioTransport) Send(req jsonrpcRequest) (jsonrpcResponse, error) {
+	t.mu.Lock()
+	callTimeout := t.callTimeout
+	t.mu.Unlock()
+	return t.sendContext(context.Background(), req, callTimeout)
+}
+
+// sendContext writes req and waits for its response, giving up after
+// callTimeout (0 = none) or when ctx is done.
+func (t *StdioTransport) sendContext(ctx context.Context, req jsonrpcRequest, callTimeout time.Duration) (jsonrpcResponse, error) {
 	data, err := json.Marshal(req)
 	if err != nil {
 		return jsonrpcResponse{}, fmt.Errorf("marshal request: %w", err)
@@ -200,27 +209,30 @@ func (t *StdioTransport) Send(req jsonrpcRequest) (jsonrpcResponse, error) {
 		t.mu.Unlock()
 		return jsonrpcResponse{}, fmt.Errorf("write to stdin: %w", err)
 	}
-	// Snapshot timeout under the lock so a concurrent SetTimeout can't race.
-	callTimeout := t.callTimeout
 	t.mu.Unlock()
 
-	// With no timeout, block on the channel. Close() drains pending via
-	// readLoop's error fanout, so this always unblocks eventually.
-	if callTimeout <= 0 {
-		r := <-ch
-		return r.resp, r.err
+	// With no timeout, wait on the channel (and ctx). Close() drains
+	// pending via readLoop's error fanout, so this always unblocks
+	// eventually.
+	var timeoutC <-chan time.Time
+	if callTimeout > 0 {
+		timer := time.NewTimer(callTimeout)
+		defer timer.Stop()
+		timeoutC = timer.C
 	}
-
-	timer := time.NewTimer(callTimeout)
-	defer timer.Stop()
 	select {
 	case r := <-ch:
 		return r.resp, r.err
-	case <-timer.C:
+	case <-timeoutC:
 		t.mu.Lock()
 		delete(t.pending, key)
 		t.mu.Unlock()
 		return jsonrpcResponse{}, fmt.Errorf("stdio read timed out after %s", callTimeout)
+	case <-ctx.Done():
+		t.mu.Lock()
+		delete(t.pending, key)
+		t.mu.Unlock()
+		return jsonrpcResponse{}, ctx.Err()
 	}
 }
 
@@ -241,6 +253,22 @@ func (t *StdioTransport) SendStreaming(req jsonrpcRequest, onEvent func(streamEv
 		return t.Send(req)
 	}
 	t.mu.Lock()
+	callTimeout := t.callTimeout
+	t.mu.Unlock()
+	return t.streamContext(context.Background(), req, onEvent, callTimeout)
+}
+
+// sendStreamingContext is SendStreaming without the call timeout: ctx alone
+// decides when to give up, as a long-lived events/stream needs.
+func (t *StdioTransport) sendStreamingContext(ctx context.Context, req jsonrpcRequest, onEvent func(streamEvent)) (jsonrpcResponse, error) {
+	if onEvent == nil {
+		return t.sendContext(ctx, req, 0)
+	}
+	return t.streamContext(ctx, req, onEvent, 0)
+}
+
+func (t *StdioTransport) streamContext(ctx context.Context, req jsonrpcRequest, onEvent func(streamEvent), callTimeout time.Duration) (jsonrpcResponse, error) {
+	t.mu.Lock()
 	t.notifyHandler = func(line []byte) {
 		onEvent(streamEvent{Type: "progress", Data: string(line)})
 	}
@@ -250,7 +278,7 @@ func (t *StdioTransport) SendStreaming(req jsonrpcRequest, onEvent func(streamEv
 		t.notifyHandler = nil
 		t.mu.Unlock()
 	}()
-	return t.Send(req)
+	return t.sendContext(ctx, req, callTimeout)
 }
 
 func (t *StdioTransport) Notify(notif jsonrpcNotification) error {
@@ -372,6 +400,12 @@ func (t *HTTPTransport) SendStreaming(req jsonrpcRequest, onEvent func(streamEve
 	return t.sendWithContext(ctx, req, onEvent)
 }
 
+// sendStreamingContext is SendStreaming bound to the caller's ctx instead of
+// the transport's stream timeout, so the caller decides when to abort.
+func (t *HTTPTransport) sendStreamingContext(ctx context.Context, req jsonrpcRequest, onEvent func(streamEvent)) (jsonrpcResponse, error) {
+	return t.sendWithContext(ctx, req, onEvent)
+}
+
 func (t *HTTPTransport) sendWithContext(ctx context.Context, req jsonrpcRequest, onEvent func(streamEvent)) (jsonrpcResponse, error) {
 	data, err := json.Marshal(req)
 	if err != nil {
@@ -446,12 +480,13 @@ func (t *HTTPTransport) sendWithContext(ctx context.Context, req jsonrpcRequest,
 	return resp, nil
 }
 
-// mcpNameForRequest returns the value for the Mcp-Name header: the tool or
-// prompt name, or the resource URI, for the methods that require it.
+// mcpNameForRequest returns the value for the Mcp-Name header: the tool,
+// prompt or event name, or the resource URI, for the methods that require it.
 func mcpNameForRequest(req jsonrpcRequest) (string, bool) {
 	var field string
 	switch req.Method {
-	case "tools/call", "prompts/get":
+	case "tools/call", "prompts/get",
+		"events/poll", "events/stream", "events/subscribe", "events/unsubscribe":
 		field = "name"
 	case "resources/read":
 		field = "uri"

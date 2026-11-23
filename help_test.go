@@ -26,6 +26,9 @@ func TestHelpFlags(t *testing.T) {
 		{"auth", func() error { return cmdAuth([]string{"--help"}) }, "Usage: mcp auth"},
 		{"ping", func() error { return cmdPing([]string{"--help"}) }, "Usage: mcp ping"},
 		{"listen", func() error { return cmdListen([]string{"--help"}) }, "Usage: mcp listen"},
+		{"events", func() error { return cmdEvents([]string{"--help"}) }, "Usage: mcp events"},
+		{"events poll", func() error { return cmdEvents([]string{"poll", "--help"}) }, "Usage: mcp events"},
+		{"events watch", func() error { return cmdEvents([]string{"watch", "-h"}) }, "Usage: mcp events"},
 		{"daemon", func() error { return cmdDaemon([]string{"--help"}) }, "Usage: mcp daemon"},
 	}
 

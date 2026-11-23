@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,9 @@ import (
 type protocolSession struct {
 	transport Transport
 	version   string
+	// capabilities is the capabilities object the server advertised in
+	// server/discover (nil until negotiation succeeds).
+	capabilities json.RawMessage
 }
 
 func newProtocolSession(t Transport, version string) *protocolSession {
@@ -45,11 +49,17 @@ func (s *protocolSession) decorate(req jsonrpcRequest) jsonrpcRequest {
 		meta = make(map[string]any)
 	}
 	meta[metaProtocolVersion] = s.version
-	meta[metaClientCapabilities] = clientCapabilities{}
+	meta[metaClientCapabilities] = modernClientCapabilities
 	meta[metaClientInfo] = clientInfo{Name: clientName, Version: Version}
 	params["_meta"] = meta
 	req.Params = params
 	return req
+}
+
+// modernClientCapabilities is declared on every modern request: the CLI
+// understands the Events extension (it sends no other capabilities).
+var modernClientCapabilities = clientCapabilities{
+	Extensions: map[string]any{extensionEvents: struct{}{}},
 }
 
 func (s *protocolSession) Send(req jsonrpcRequest) (jsonrpcResponse, error) {
@@ -57,6 +67,16 @@ func (s *protocolSession) Send(req jsonrpcRequest) (jsonrpcResponse, error) {
 }
 
 func (s *protocolSession) SendStreaming(req jsonrpcRequest, onEvent func(streamEvent)) (jsonrpcResponse, error) {
+	return s.transport.SendStreaming(s.decorate(req), onEvent)
+}
+
+// sendStreamingContext is SendStreaming bound to ctx, so a caller can abort
+// a long-lived stream (e.g. one whose heartbeats stopped). Transports that
+// cannot be aborted fall back to a plain SendStreaming.
+func (s *protocolSession) sendStreamingContext(ctx context.Context, req jsonrpcRequest, onEvent func(streamEvent)) (jsonrpcResponse, error) {
+	if cs, ok := s.transport.(contextStreamer); ok {
+		return cs.sendStreamingContext(ctx, s.decorate(req), onEvent)
+	}
 	return s.transport.SendStreaming(s.decorate(req), onEvent)
 }
 
@@ -70,6 +90,12 @@ func (s *protocolSession) Close() error {
 
 func (s *protocolSession) SetTimeout(d time.Duration) {
 	s.transport.SetTimeout(d)
+}
+
+// contextStreamer is implemented by transports whose streaming requests can
+// be aborted through a context.
+type contextStreamer interface {
+	sendStreamingContext(ctx context.Context, req jsonrpcRequest, onEvent func(streamEvent)) (jsonrpcResponse, error)
 }
 
 // protocolVersionSetter is implemented by transports that vary per-request
@@ -141,6 +167,7 @@ func negotiateProtocol(transport Transport) (Transport, error) {
 		return legacyHandshake(transport)
 	}
 
+	modern.capabilities = result.Capabilities
 	return modern, nil
 }
 

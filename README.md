@@ -53,6 +53,12 @@ this CLI.
   each server's schemas would cost if loaded natively.
 - **Streaming.** `mcp call --stream` emits NDJSON progress events for
   long-running tools.
+- **Events.** For servers that implement the
+  [Events extension](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/seps/3415-events-extension.md)
+  (SEP-3415), `mcp events poll` fetches what happened since the last run.
+  It keeps the cursor in a file, so it works from cron or an agent's
+  wake-up loop. `mcp events watch` streams events as NDJSON. Either way you
+  wait on the server instead of polling a tool.
 - **Shell composability.** Output is JSON on stdout, logs on stderr, exit
   codes for success/failure. Pipe, capture, chain at will.
 
@@ -150,6 +156,26 @@ mcp call <server> <tool> --stream --params '{"key": "value"}'
 # Override the per-call timeout (default: 2m plain / 5m streaming; 0 = no limit)
 mcp call <server> <tool> --timeout 10m --params '{"key": "value"}'
 
+# Events (servers with the io.modelcontextprotocol/events extension).
+# List event types and their delivery modes (--full adds the schemas)
+mcp events [server] [--query "term"] [--full]
+
+# Fetch events since the last run. The first run starts from now: it returns
+# no events, just a cursor, which --cursor-file saves for the next run.
+# Subscription arguments are flags typed from the event's inputSchema
+# (or --params JSON).
+mcp events poll <server> <event> --cursor-file ~/.cache/incidents.cursor --severity P1
+
+# Keep polling at the server's recommended interval, as NDJSON
+mcp events poll <server> <event> --follow --cursor-file ~/.cache/incidents.cursor
+
+# Stream events as NDJSON over events/stream: {"type":"event",...}. Reconnects
+# with the last cursor if the stream drops; polls if the event has no push mode
+mcp events watch <server> <event> --severity P1
+
+# Webhook delivery (events/subscribe) is not supported: it needs a public
+# https receiver, which a CLI does not have.
+
 # Authenticate
 mcp auth <name> --callback-url <url>
 
@@ -165,7 +191,7 @@ MCP_AUTH_TOKEN=<token> mcp call https://api.example.com/mcp <tool> --params '{}'
 
 # Static headers for ad-hoc URLs (no `add` needed): one "Name: Value" per
 # line in MCP_HEADERS. Values may reference env vars as ${VAR}. Works for
-# every ad-hoc command (tools, call, resources, read, ping, listen).
+# every ad-hoc command (tools, call, resources, read, ping, listen, events).
 MCP_HEADERS="Authorization: Bearer ${DEVIN_API_KEY}
 X-Org-Id: ${DEVIN_ORG_ID}" mcp tools https://mcp.devin.ai/mcp
 

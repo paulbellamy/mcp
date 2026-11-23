@@ -371,6 +371,9 @@ func TestMcpNameForRequest(t *testing.T) {
 		{"tools/call", toolCallParams{Name: "search"}, "search", true},
 		{"prompts/get", map[string]any{"name": "greeting"}, "greeting", true},
 		{"resources/read", resourceReadParams{URI: "file:///a.txt"}, "file:///a.txt", true},
+		{"events/poll", eventsPollParams{Name: "email.received"}, "email.received", true},
+		{"events/stream", eventsStreamParams{Name: "incident.created"}, "incident.created", true},
+		{"events/list", eventsListParams{}, "", false},
 		{"tools/list", toolsListParams{}, "", false},
 		{"server/discover", nil, "", false},
 	}
